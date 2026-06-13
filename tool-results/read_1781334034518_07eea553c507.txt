@@ -1,0 +1,459 @@
+     1→# MindGuard — Multi-Agent Real-Time Mental Wellness Tracker
+     2→
+     3→**Product Requirements Document**
+     4→
+     5→| Field | Value |
+     6→|-------|-------|
+     7→| Event | PromptWars 2025 — Hack2Skill |
+     8→| Challenge | Mental Wellness Tracker |
+     9→| Version | 1.0 |
+    10→| Date | June 2025 |
+    11→| Classification | Confidential — Hackathon Team Internal |
+    12→
+    13→---
+    14→
+    15→## Table of Contents
+    16→
+    17→1. [Executive Summary](#1-executive-summary)
+    18→2. [Current State & Problem Analysis](#2-current-state--problem-analysis)
+    19→   - 2.1 [The Student Mental Health Crisis](#21-the-student-mental-health-crisis)
+    20→   - 2.2 [Limitations of Existing Solutions](#22-limitations-of-existing-solutions)
+    21→   - 2.3 [The Opportunity](#23-the-opportunity)
+    22→3. [Goals & Expected Outcomes](#3-goals--expected-outcomes)
+    23→   - 3.1 [Primary Goals](#31-primary-goals)
+    24→   - 3.2 [Expected Outcomes](#32-expected-outcomes)
+    25→   - 3.3 [Non-Goals](#33-non-goals)
+    26→4. [Solution Design](#4-solution-design)
+    27→   - 4.1 [System Architecture Overview](#41-system-architecture-overview)
+    28→   - 4.2 [Input Ingestion Layer](#42-input-ingestion-layer)
+    29→   - 4.3 [Multi-Agent Processing Layer](#43-multi-agent-processing-layer)
+    30→   - 4.4 [LangGraph Supervisor](#44-langgraph-supervisor)
+    31→   - 4.5 [Output & Intervention Layer](#45-output--intervention-layer)
+    32→   - 4.6 [Technology Stack](#46-technology-stack)
+    33→5. [Implementation Roadmap & Milestones](#5-implementation-roadmap--milestones)
+    34→   - 5.1 [Phase 1: Core Pipeline (Weeks 1–3)](#51-phase-1-core-pipeline-weeks-13)
+    35→   - 5.2 [Phase 2: Multi-Agent System (Weeks 3–5)](#52-phase-2-multi-agent-system-weeks-35)
+    36→   - 5.3 [Phase 3: Real-Time Dashboard (Weeks 5–7)](#53-phase-3-real-time-dashboard-weeks-57)
+    37→   - 5.4 [Phase 4: Wearable Integration (Weeks 7–8)](#54-phase-4-wearable-integration-weeks-78)
+    38→   - 5.5 [Phase 5: Polish & Demo (Weeks 9–10)](#55-phase-5-polish--demo-weeks-910)
+    39→6. [Resource Requirements & Budget](#6-resource-requirements--budget)
+    40→   - 6.1 [Team Composition](#61-team-composition)
+    41→   - 6.2 [Infrastructure Costs](#62-infrastructure-costs)
+    42→   - 6.3 [Open-Source Dependencies](#63-open-source-dependencies)
+    43→7. [Risk Analysis & Mitigation](#7-risk-analysis--mitigation)
+    44→   - 7.1 [Data Privacy & Security](#71-data-privacy--security)
+    45→   - 7.2 [Agent Hallucination & Misinterpretation](#72-agent-hallucination--misinterpretation)
+    46→   - 7.3 [Crisis False Positives & Negatives](#73-crisis-false-positives--negatives)
+    47→   - 7.4 [Wearable API Reliability](#74-wearable-api-reliability)
+    48→   - 7.5 [Performance & Latency](#75-performance--latency)
+    49→8. [Expected Benefits & Evaluation](#8-expected-benefits--evaluation)
+    50→   - 8.1 [Competitive Differentiation](#81-competitive-differentiation)
+    51→   - 8.2 [Student Impact](#82-student-impact)
+    52→   - 8.3 [Evaluation Framework](#83-evaluation-framework)
+    53→   - 8.4 [Post-Hackathon Roadmap](#84-post-hackathon-roadmap)
+    54→
+    55→---
+    56→
+    57→## 1. Executive Summary
+    58→
+    59→MindGuard is a multi-agent, real-time mental wellness tracking platform designed specifically for students experiencing academic stress, anxiety, and emotional burnout. Unlike existing mood trackers that rely on single-source self-reporting and static journaling, MindGuard aggregates signals from five distinct input channels—voice journals, text diaries, study behavior logs, conversational chat, and wearable physiological data—and processes them through a team of specialized AI agents orchestrated by a LangGraph supervisor. The result is a continuously updated, holistic understanding of each student's mental state that no single data source could capture alone.
+    60→
+    61→The platform's core innovation lies in its multi-agent architecture. A **Sentiment Agent** analyzes emotional tone from text and voice, a **Behavior Agent** detects patterns of burnout and isolation from activity logs, a **Physio Agent** correlates heart rate variability and sleep quality with stress levels, a **Crisis Detector** flags dangerous emotional spikes requiring immediate intervention, and a **Memory Agent** maintains longitudinal context across sessions using ChromaDB vector storage. The LangGraph supervisor fuses these signals in real time, routing to personalized output agents that deliver coping strategies, mindfulness exercises, motivational nudges, weekly insight reports, or crisis escalation to a human counselor.
+    62→
+    63→This PRD defines the product scope, target users, technical architecture, feature specifications, implementation roadmap, risk analysis, and success metrics for MindGuard. The project is scoped for a 10-week development cycle culminating in a live demo at the PromptWars 2025 hackathon, with a post-event roadmap for production deployment. MindGuard aims to solve a deeper problem than what typical hackathon teams will address: not just tracking mood, but understanding the full context of a student's mental wellness and intervening proactively before crises develop.
+    64→
+    65→---
+    66→
+    67→## 2. Current State & Problem Analysis
+    68→
+    69→### 2.1 The Student Mental Health Crisis
+    70→
+    71→Student mental health has deteriorated sharply across global educational institutions. According to the World Health Organization, depression and anxiety rank among the leading causes of illness and disability among adolescents and young adults aged 15 to 29. In India specifically, the National Mental Health Survey reports that nearly 10% of the population is affected by mental health disorders, with students forming a disproportionately large segment due to academic pressure, social isolation, and career uncertainty. The COVID-19 pandemic exacerbated these trends, with remote learning severing the in-person support networks that many students relied upon, and the effects have persisted well beyond lockdown periods.
+    72→
+    73→Despite the severity of this crisis, most available digital tools for mental wellness are fundamentally limited. They treat mental health tracking as a checkbox exercise—a daily mood rating, a gratitude journal prompt, or a pre-recorded meditation session. These tools are static, reactive, and single-dimensional. A student who logs "fine" on a mood tracker while their study behavior shows 14-hour screen sessions and their wearable reports elevated resting heart rate receives no meaningful intervention from the tool, because the tool only sees the self-reported "fine." This disconnect between self-perception and physiological reality is where the deepest problems lie.
+    74→
+    75→### 2.2 Limitations of Existing Solutions
+    76→
+    77→| Limitation | Current Tools | MindGuard Approach |
+    78→|------------|---------------|-------------------|
+    79→| Single input source | Self-reported mood or journal only | 5 sources: voice, text, behavior, chat, wearable |
+    80→| No real-time analysis | Daily check-ins, static prompts | Continuous streaming analysis with live dashboard |
+    81→| No context memory | Each session starts fresh | ChromaDB vector store for longitudinal context |
+    82→| No crisis detection | Generic "call helpline" links | AI crisis detector with threshold-based escalation |
+    83→| No multi-signal fusion | Only text sentiment considered | LangGraph supervisor fuses sentiment + behavior + physio |
+    84→| Generic interventions | Same tips for all users | Personalized coping strategies from memory-aware agents |
+    85→
+    86→*Table 1: Comparison of Current Tools vs. MindGuard Approach*
+    87→
+    88→### 2.3 The Opportunity
+    89→
+    90→The convergence of three technology trends creates a unique opportunity. First, large language models (LLMs) like Claude and Gemini have achieved the nuance and safety awareness necessary for mental health applications, capable of understanding emotional subtext and responding with empathy while respecting safety boundaries. Second, wearable devices have become ubiquitous among students, providing continuous physiological data streams (heart rate, sleep patterns, activity levels) that were previously available only in clinical settings. Third, multi-agent orchestration frameworks like LangGraph have matured to the point where complex workflows—with specialized agents communicating through a central supervisor—can be built and deployed rapidly, making the hackathon timeline feasible.
+    91→
+    92→MindGuard leverages all three trends simultaneously. No existing open-source project or commercial product combines multi-source input, multi-agent processing, and real-time dashboarding in a single platform focused on student wellness. The closest reference architectures—the Daily Journal Analyzer (Gemini-based emotion extraction) and MindHaven (Streamlit mood tracker with DeepSeek chat)—each cover only one or two of these dimensions. MindGuard covers all five.
+    93→
+    94→---
+    95→
+    96→## 3. Goals & Expected Outcomes
+    97→
+    98→### 3.1 Primary Goals
+    99→
+   100→The primary goal of MindGuard is to build a working, demonstrable prototype that proves the viability of multi-agent, multi-source mental wellness tracking for students. The prototype must show end-to-end data flow from at least three input sources through the agent pipeline to the real-time dashboard within a single user session. It must demonstrate the LangGraph supervisor making intelligent routing decisions based on fused agent outputs, and it must include at least one crisis detection scenario that triggers an escalation pathway.
+   101→
+   102→A secondary but equally important goal is to differentiate MindGuard from the expected hackathon competition. Most teams at PromptWars will build single-source mood trackers with basic sentiment analysis and pre-scripted responses. MindGuard's multi-agent architecture, real-time multi-signal fusion, and longitudinal memory represent a fundamentally different approach that solves deeper problems—not just "what is the user feeling?" but "what is the full context of their wellness, and what should we do about it right now?"
+   103→
+   104→### 3.2 Expected Outcomes
+   105→
+   106→| Outcome | Success Metric | Target |
+   107→|---------|---------------|--------|
+   108→| Multi-source ingestion | Number of active input channels | 5 sources operational |
+   109→| Real-time processing | End-to-end latency (input to dashboard) | Under 5 seconds for text/voice |
+   110→| Agent accuracy | Sentiment alignment with human labels | 80%+ on test dataset |
+   111→| Crisis detection | True positive rate for crisis scenarios | 90%+ with <10% false positive rate |
+   112→| Dashboard engagement | Student weekly active usage | 5+ sessions per week in pilot |
+   113→| Demo impact | Judge evaluation at PromptWars | Top 3 finish |
+   114→
+   115→*Table 2: Expected Outcomes and Success Metrics*
+   116→
+   117→### 3.3 Non-Goals
+   118→
+   119→The following items are explicitly out of scope for the hackathon prototype but are noted for the post-event production roadmap:
+   120→
+   121→- **Clinical validation** and FDA/CE medical device certification are not pursued in Phase 1; MindGuard is a wellness tool, not a diagnostic or therapeutic device.
+   122→- **Full HIPAA/GDPR compliance** infrastructure (encryption at rest, audit logging, consent management) will be designed for but not fully implemented in the prototype.
+   123→- **Native mobile applications** (iOS/Android) are deferred in favor of a responsive web application.
+   124→- **Integration with electronic health record (EHR)** systems is not included.
+   125→- **Multi-language support** beyond English is a Phase 2 consideration.
+   126→
+   127→---
+   128→
+   129→## 4. Solution Design
+   130→
+   131→### 4.1 System Architecture Overview
+   132→
+   133→MindGuard follows a three-tier architecture: an **Input Ingestion Layer** that normalizes data from heterogeneous sources, a **Multi-Agent Processing Layer** that runs specialized AI agents under a LangGraph supervisor, and a **Presentation Layer** that renders real-time insights on a web dashboard. Each tier communicates through well-defined APIs, enabling independent scaling and testing. The architecture is designed to be modular—new input sources or processing agents can be added without modifying existing components.
+   134→
+   135→```
+   136→┌──────────────────────────────────────────────────────────────────────────┐
+   137→│                        INPUT SOURCES                                     │
+   138→│  ┌─────────┐ ┌─────────┐ ┌──────────┐ ┌─────────┐ ┌──────────────┐    │
+   139→│  │  Voice   │ │  Text   │ │  Study   │ │  Chat   │ │  Wearable    │    │
+   140→│  │ Journal  │ │  Diary  │ │ Behavior │ │         │ │  Data        │    │
+   141→│  │(Whisper) │ │ (NLP)   │ │ (Logs)   │ │(Conv.)  │ │(HR/Sleep)    │    │
+   142→│  └────┬─────┘ └────┬────┘ └────┬─────┘ └────┬────┘ └──────┬───────┘    │
+   143→│       │            │           │            │             │             │
+   144→└───────┼────────────┼───────────┼────────────┼─────────────┼─────────────┘
+   145→        │            │           │            │             │
+   146→        ▼            ▼           ▼            ▼             ▼
+   147→┌──────────────────────────────────────────────────────────────────────────┐
+   148→│                     SPECIALIZED AGENTS                                   │
+   149→│  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐     │
+   150→│  │Sentiment │ │ Behavior │ │  Physio  │ │  Crisis  │ │  Memory  │     │
+   151→│  │  Agent   │ │  Agent   │ │  Agent   │ │ Detector │ │  Agent   │     │
+   152→│  └────┬─────┘ └────┬─────┘ └────┬─────┘ └────┬─────┘ └────┬─────┘     │
+   153→│       │            │            │            │             │            │
+   154→│       └────────────┴──────┬─────┴────────────┘             │            │
+   155→│                           │                                │            │
+   156→│                    ┌──────▼──────┐                         │            │
+   157→│                    │  LangGraph  │◄────────────────────────┘            │
+   158→│                    │  Supervisor │                                      │
+   159→│                    │ Orchestrator│                                      │
+   160→│                    └──────┬──────┘                                      │
+   161→│                           │                                             │
+   162→└───────────────────────────┼─────────────────────────────────────────────┘
+   163→                            │
+   164→                            ▼
+   165→┌──────────────────────────────────────────────────────────────────────────┐
+   166→│                       OUTPUT AGENTS                                      │
+   167→│  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐     │
+   168→│  │  Coping  │ │Mindful-  │ │Motivational│ │ Weekly  │ │  Crisis  │     │
+   169→│  │Strategies│ │  ness    │ │  Nudges   │ │Insights │ │Escalation│     │
+   170→│  └──────────┘ └──────────┘ └──────────┘ └──────────┘ └──────────┘     │
+   171→└──────────────────────────────────────────────────────────────────────────┘
+   172→                            │
+   173→                    ┌───────▼───────┐
+   174→                    │   ChromaDB    │
+   175→                    │  Vector Store │
+   176→                    │ (Long-Term    │
+   177→                    │   Memory)     │
+   178→                    └───────────────┘
+   179→```
+   180→
+   181→*Figure 1: MindGuard Multi-Agent Architecture Overview*
+   182→
+   183→### 4.2 Input Ingestion Layer
+   184→
+   185→The Input Ingestion Layer is responsible for collecting, normalizing, and queuing data from five distinct source types. Each source has a dedicated adapter that transforms raw data into a unified internal format (a JSON envelope containing source type, timestamp, content, metadata, and confidence score). The adapters feed into a common message queue (Redis Streams) that buffers incoming data for the processing layer.
+   186→
+   187→| Source | Adapter | Data Format | Frequency |
+   188→|--------|---------|-------------|-----------|
+   189→| Voice Journal | Whisper STT + emotion prosody | Transcript + audio features | On-demand (user records) |
+   190→| Text Diary | NLP preprocessor | Raw text + metadata | On-demand (user writes) |
+   191→| Study Behavior | Activity log parser | Screen time + app usage + break patterns | Every 15 minutes |
+   192→| Chat | Conversation adapter | Message thread + intent tags | Real-time (per message) |
+   193→| Wearable | Health API connector (Apple HealthKit / Google Fit) | HR, HRV, sleep stages, steps | Every 5 minutes or on event |
+   194→
+   195→*Table 3: Input Sources and Their Adapters*
+   196→
+   197→### 4.3 Multi-Agent Processing Layer
+   198→
+   199→The processing layer is the heart of MindGuard. It consists of five specialized agents and a LangGraph supervisor that orchestrates their interactions. Each agent is an independent computational unit with its own prompt template, tools, and memory scope. The supervisor maintains a shared state graph and routes tasks based on the current context, urgency level, and agent availability. This design ensures that no single agent becomes a bottleneck and that the system gracefully degrades if one agent is unavailable.
+   200→
+   201→#### 4.3.1 Sentiment Agent
+   202→
+   203→The Sentiment Agent processes text and voice transcript inputs to extract emotional valence (positive/negative/neutral), arousal level (calm/energetic/agitated), and dominant emotions (joy, sadness, anger, fear, surprise, disgust). It uses a fine-tuned LLM prompt that includes the student's recent emotional history from the Memory Agent, enabling context-aware analysis rather than isolated sentiment scoring. For voice inputs, the agent also considers prosodic features extracted by Whisper (pitch variation, speech rate, pause patterns) that provide additional emotional signals beyond the transcript text. The agent outputs a structured sentiment object containing valence score, arousal score, emotion labels with confidence values, and a brief textual analysis that other agents can consume.
+   204→
+   205→#### 4.3.2 Behavior Agent
+   206→
+   207→The Behavior Agent analyzes study activity patterns to detect behavioral indicators of deteriorating mental health. It tracks screen time distribution across productive vs. distracting applications, break frequency and duration, time-of-day study patterns (late-night studying as a stress indicator), and social interaction frequency (if the student opts into messaging metadata). The agent computes a **Burnout Risk Score (0–100)** based on a weighted combination of these factors, using thresholds derived from occupational health research on academic burnout. For example, consecutive days with more than 10 hours of screen time and fewer than 2 breaks triggers a "High Burnout Risk" flag. The agent also identifies positive behavioral patterns (consistent study schedules, regular breaks) that can be reinforced through motivational nudges.
+   208→
+   209→#### 4.3.3 Physio Agent
+   210→
+   211→The Physio Agent correlates physiological data from wearable devices with emotional and behavioral states. Its primary inputs are heart rate variability (HRV), resting heart rate, sleep duration and quality (REM/deep/light stages), and step count. Research consistently shows that reduced HRV correlates with stress and anxiety, elevated resting heart rate can indicate chronic stress, and disrupted sleep architecture is both a symptom and predictor of depression. The Physio Agent computes a **Stress Index (0–100)** using a composite model that weighs these factors according to established psychophysiological literature. When HRV drops below the student's personal baseline for three consecutive readings, the agent generates a "Physiological Stress Alert" that the supervisor evaluates alongside signals from other agents.
+   212→
+   213→#### 4.3.4 Crisis Detector
+   214→
+   215→The Crisis Detector is the most safety-critical agent in the system. It monitors all incoming signals for patterns that indicate imminent risk: expressions of self-harm or suicidal ideation in text or voice, sudden and severe drops in sentiment combined with social isolation behavior, extreme physiological stress readings, or direct statements of distress in chat. The agent uses a multi-tier classification approach:
+   216→
+   217→- **Tier 1:** Keyword matching and pattern recognition for known crisis language (e.g., self-harm phrases, hopelessness indicators).
+   218→- **Tier 2:** LLM evaluation of context to distinguish between figurative language ("I'm dying of stress") and genuine crisis signals ("I don't see the point anymore").
+   219→- **Tier 3:** Cross-referencing with the Memory Agent's longitudinal data to assess whether this is an acute change from the student's baseline.
+   220→
+   221→When a crisis is confirmed, the agent immediately triggers the Crisis Escalation output pathway, which displays prominent helpline information and, with the student's prior consent, notifies a designated emergency contact or campus counselor.
+   222→
+   223→#### 4.3.5 Memory Agent
+   224→
+   225→The Memory Agent maintains longitudinal context for each student using ChromaDB, a vector database that stores embeddings of past sessions, sentiment trajectories, behavioral patterns, and intervention outcomes. When any processing agent needs context (e.g., "has this student's mood been declining over the past week?"), it queries the Memory Agent, which retrieves the most relevant historical data using semantic similarity search. This enables the system to move beyond reactive, session-by-session analysis toward truly contextualized understanding.
+   226→
+   227→For example, the Sentiment Agent can interpret "I'm okay" very differently if the Memory Agent reports that the same student has been logging this response for five consecutive days while their physiological data shows deteriorating sleep. The Memory Agent also tracks which interventions were effective for each student in the past, enabling personalized coping strategy recommendations.
+   228→
+   229→### 4.4 LangGraph Supervisor
+   230→
+   231→The LangGraph supervisor is the central orchestrator that ties all agents together. It maintains a shared state graph where each node represents an agent and edges represent data flow and conditional routing. The supervisor receives incoming data from the Input Ingestion Layer, determines which agents should process it based on the data type and current context, dispatches tasks to those agents, collects and fuses their outputs, and routes the fused result to the appropriate output agent. The supervisor also implements priority-based scheduling: crisis signals are processed immediately and preempt all other tasks, while routine mood updates are batched and processed during idle cycles to optimize resource usage.
+   232→
+   233→The supervisor's routing logic is implemented as a conditional graph in LangGraph. For each incoming data event, the supervisor evaluates the current state (recent sentiment, burnout risk, stress index, crisis flags) and decides which agents need to be invoked:
+   234→
+   235→- A new **voice journal entry** triggers the Sentiment Agent and Memory Agent.
+   236→- A **wearable stress alert** triggers the Physio Agent and Crisis Detector.
+   237→- A **chat message** triggers the Sentiment Agent and Memory Agent, with conditional invocation of the Crisis Detector if sentiment scores fall below a threshold.
+   238→- A **periodic "full review"** every 24 hours runs all agents against the accumulated data to generate the Weekly Insight Report.
+   239→
+   240→### 4.5 Output & Intervention Layer
+   241→
+   242→| Output Agent | Trigger | Deliverable | Channel |
+   243→|-------------|---------|-------------|---------|
+   244→| Coping Strategies Agent | Sentiment score < 40 or burnout risk > 60 | Personalized coping technique (breathing, reframing, journaling prompt) | Dashboard notification + chat |
+   245→| Mindfulness Exercises Agent | Physio stress index > 65 or explicit request | Guided breathing exercise, body scan, or progressive muscle relaxation | Dashboard + audio playback |
+   246→| Motivational Nudges Agent | Positive behavior detected or streak milestone | Encouragement message, streak celebration, progress summary | Push notification + dashboard |
+   247→| Weekly Insights Agent | Scheduled (every 7 days) or on-demand | Trend analysis, pattern summary, recommendations for next week | Dashboard report + email |
+   248→| Crisis Escalation Agent | Crisis Detector confirms risk | Helpline display, emergency contact notification, campus counselor alert | Full-screen modal + SMS/email |
+   249→
+   250→*Table 4: Output Agents and Their Trigger Conditions*
+   251→
+   252→### 4.6 Technology Stack
+   253→
+   254→| Layer | Technology | Justification |
+   255→|-------|-----------|---------------|
+   256→| Orchestration | LangGraph | Native multi-agent graph execution with conditional routing |
+   257→| LLM (Primary) | Claude API / Google Gemini | Strong safety alignment + nuanced emotional understanding |
+   258→| LLM (Fallback) | Groq LLaMA | Low-latency inference for real-time responses |
+   259→| Voice STT | Whisper API | Best-in-class speech-to-text with prosodic features |
+   260→| Memory Store | ChromaDB | Lightweight vector DB, Python-native, fast semantic search |
+   261→| Message Queue | Redis Streams | Low-latency pub/sub for real-time data flow |
+   262→| Backend | FastAPI | Async Python, WebSocket support, auto-generated API docs |
+   263→| Frontend | Next.js 14 + Recharts | Real-time dashboard, SSR, responsive design |
+   264→| Database | PostgreSQL + pgvector | Structured data + vector similarity search |
+   265→| Deployment | Docker Compose | Single-command deployment for demo; Kubernetes for production |
+   266→
+   267→*Table 5: Technology Stack and Justifications*
+   268→
+   269→---
+   270→
+   271→## 5. Implementation Roadmap & Milestones
+   272→
+   273→The development is structured into five phases over a 10-week timeline, with each phase building on the previous one and delivering a testable increment. The overlapping phases (Phase 1–3 have 1-week overlaps) allow parallel work streams where backend and frontend development proceed concurrently.
+   274→
+   275→```
+   276→Week →   1    2    3    4    5    6    7    8    9    10
+   277→         ├─────────┤                                Phase 1: Core Pipeline
+   278→              ├──────────┤                          Phase 2: Multi-Agent System
+   279→                   ├──────────┤                     Phase 3: Real-Time Dashboard
+   280→                         ├──────┤                   Phase 4: Wearable Integration
+   281→                              ├──────┤              Phase 5: Polish & Demo
+   282→         ▼      ▼      ▼    ▼   ▼
+   283→        MVP   Alpha   Beta  RC  Demo
+   284→```
+   285→
+   286→### 5.1 Phase 1: Core Pipeline (Weeks 1–3)
+   287→
+   288→Phase 1 establishes the foundational data pipeline: the Input Ingestion Layer with text diary and chat adapters, the FastAPI backend with WebSocket support, and the LangGraph supervisor skeleton with the Sentiment Agent as the first processing agent. The deliverable at the end of Phase 1 is a minimum viable pipeline where a student can type a journal entry, the Sentiment Agent analyzes it, and the result appears on a basic dashboard. This proves end-to-end connectivity and validates the LangGraph integration before more complex agents are added.
+   289→
+   290→### 5.2 Phase 2: Multi-Agent System (Weeks 3–5)
+   291→
+   292→Phase 2 adds the remaining processing agents (Behavior Agent, Physio Agent, Crisis Detector, Memory Agent) and implements the supervisor's conditional routing logic. The Memory Agent integration with ChromaDB is the critical path item, as all other agents depend on it for longitudinal context. The deliverable is a fully functional multi-agent pipeline where a text input is processed by multiple agents simultaneously, their outputs are fused by the supervisor, and the fused result triggers the appropriate output agent. This phase also includes the Crisis Detector's multi-tier classification system and the Crisis Escalation output pathway.
+   293→
+   294→### 5.3 Phase 3: Real-Time Dashboard (Weeks 5–7)
+   295→
+   296→Phase 3 focuses on the frontend experience: the real-time Next.js dashboard with Recharts visualizations, WebSocket-driven live updates, and the five output agent deliverables (coping strategies, mindfulness exercises, motivational nudges, weekly insights, crisis escalation). The voice journal adapter with Whisper STT is also implemented in this phase. The deliverable is a polished, demo-ready web interface where all features are accessible and visually compelling. User experience testing with 3–5 student volunteers provides feedback for final adjustments.
+   297→
+   298→### 5.4 Phase 4: Wearable Integration (Weeks 7–8)
+   299→
+   300→Phase 4 integrates wearable data through the Health API connector (Apple HealthKit export or Google Fit API). This is the most technically challenging phase due to the variability of wearable data formats and the need to handle missing or noisy readings gracefully. The Physio Agent's Stress Index model is calibrated using the wearable data, and the real-time dashboard gains a physiological metrics panel. The deliverable is a complete data loop from wearable input through Physio Agent processing to dashboard visualization and intervention output.
+   301→
+   302→### 5.5 Phase 5: Polish & Demo (Weeks 9–10)
+   303→
+   304→Phase 5 is dedicated to performance optimization, edge case handling, and demo preparation. The team runs load tests to ensure the system handles concurrent users, stress-tests the crisis detection pathway with adversarial inputs, and prepares the demo script and presentation materials. A "Demo Day" dry run with external reviewers provides final feedback. The deliverable is a production-quality demo that can be presented to the PromptWars judges with confidence, including pre-loaded data scenarios that showcase the full range of MindGuard's capabilities.
+   305→
+   306→---
+   307→
+   308→## 6. Resource Requirements & Budget
+   309→
+   310→### 6.1 Team Composition
+   311→
+   312→| Role | Count | Responsibilities |
+   313→|------|-------|-----------------|
+   314→| Backend Engineer | 2 | FastAPI, LangGraph agents, Redis, PostgreSQL |
+   315→| Frontend Engineer | 1 | Next.js dashboard, Recharts, WebSocket client |
+   316→| AI/ML Engineer | 1 | LLM prompts, ChromaDB, sentiment/behavior models |
+   317→| Product/Design Lead | 1 | UX flows, demo script, judge presentation |
+   318→
+   319→*Table 6: Team Composition*
+   320→
+   321→### 6.2 Infrastructure Costs
+   322→
+   323→| Resource | Provider | Spec | Monthly Cost (USD) |
+   324→|----------|----------|------|---------------------|
+   325→| LLM API (Claude/Gemini) | Anthropic/Google | Pro tier, ~50K requests/month | $150–$300 |
+   326→| GPU Instance (ML) | RunPod / Vast.ai | 1x A100, on-demand | $100–$200 |
+   327→| Cloud Hosting | Railway / Render | 2 vCPU, 8GB RAM | $20–$50 |
+   328→| Vector DB | ChromaDB Cloud | Starter tier | $0–$25 |
+   329→| Domain + SSL | Cloudflare | Custom domain | $15 |
+   330→| **Total** | | | **$285–$590/month** |
+   331→
+   332→*Table 7: Infrastructure Cost Estimates*
+   333→
+   334→### 6.3 Open-Source Dependencies
+   335→
+   336→MindGuard leverages several open-source projects as building blocks rather than templates:
+   337→
+   338→| Project | GitHub | Usage |
+   339→|---------|--------|-------|
+   340→| Daily Journal Analyzer | [soumyajiitdas/My-GenAICapstoneProject](https://github.com/soumyajiitdas/My-GenAICapstoneProject) | Reference architecture for Gemini-based emotion extraction from journal entries |
+   341→| MindHaven | [AminaAsif9/MindHaven](https://github.com/AminaAsif9/MindHaven) | Streamlit-based mood tracking interface with AI chat integration |
+   342→| MindLink | [Mallika-coder/mindlink](https://github.com/Mallika-coder/mindlink) | On-device TF.js sentiment analysis with student-specific features |
+   343→| Awesome Mental Health | [dreamingechoes/awesome-mental-health](https://github.com/dreamingechoes/awesome-mental-health) | Comprehensive catalog of existing tools and resources |
+   344→| Mental Wellness Prompts | [joebwd/mental-wellness-prompts](https://github.com/joebwd/mental-wellness-prompts) | Reusable conversation frameworks, safety protocols, crisis resources |
+   345→
+   346→Each of these projects informs specific components of MindGuard without being adopted wholesale, ensuring that the final product is architecturally distinct and solves problems that none of these individual projects address.
+   347→
+   348→---
+   349→
+   350→## 7. Risk Analysis & Mitigation
+   351→
+   352→### Risk Assessment Matrix
+   353→
+   354→| Risk | Likelihood | Impact | Detectability | Risk Score |
+   355→|------|-----------|--------|---------------|------------|
+   356→| Data Privacy Breach | 2.0 | 5.0 | 4.0 | 3.7 |
+   357→| Agent Hallucination | 4.0 | 3.0 | 3.0 | 3.3 |
+   358→| Crisis False Positive | 3.0 | 5.0 | 2.0 | 3.3 |
+   359→| Wearable API Failure | 3.0 | 2.0 | 4.0 | 3.0 |
+   360→| Latency Spike | 3.0 | 3.0 | 4.0 | 3.3 |
+   361→
+   362→### 7.1 Data Privacy & Security
+   363→
+   364→Mental health data is among the most sensitive categories of personal information, and any breach would be catastrophic for user trust and legal compliance. The primary risk is unauthorized access to stored journal entries, sentiment profiles, or physiological data. Mitigation strategies include:
+   365→
+   366→- Encrypting all data **at rest (AES-256)** and **in transit (TLS 1.3)**
+   367→- Implementing **role-based access control** with the principle of least privilege
+   368→- Storing **PII separately** from wellness data using pseudonymization
+   369→- Conducting **regular security audits**
+   370→
+   371→For the hackathon prototype, we implement encryption in transit and basic authentication; full at-rest encryption and audit logging are deferred to the production roadmap.
+   372→
+   373→### 7.2 Agent Hallucination & Misinterpretation
+   374→
+   375→LLM-based agents can generate plausible but incorrect responses, which is particularly dangerous in a mental health context. A hallucinated crisis where none exists causes unnecessary panic; a missed crisis signal could have real-world consequences. Mitigation strategies include:
+   376→
+   377→- Implementing the **multi-tier classification system** for crisis detection (keyword matching → contextual LLM evaluation → longitudinal cross-referencing)
+   378→- Requiring **consensus from at least two agents** before triggering crisis escalation
+   379→- Maintaining **human-in-the-loop** for all high-stakes decisions
+   380→- Implementing **confidence scoring** with automated suppression of low-confidence outputs
+   381→- Regular **prompt engineering reviews and red-teaming exercises**
+   382→
+   383→### 7.3 Crisis False Positives & Negatives
+   384→
+   385→False positives (flagging a non-crisis as a crisis) erode user trust and create alert fatigue, while false negatives (missing a genuine crisis) pose safety risks. The mitigation approach uses the three-tier crisis detection system described in Section 4.3.4, with explicit thresholds calibrated through testing against labeled datasets. We set an initial false positive tolerance of **10%** and a false negative tolerance of effectively **0%**, erring on the side of over-alerting during the prototype phase. Post-launch, we implement a feedback mechanism where users can dismiss false alerts, which feeds back into threshold calibration.
+   386→
+   387→### 7.4 Wearable API Reliability
+   388→
+   389→Wearable data APIs are notoriously inconsistent: data may arrive late, in batches, or not at all due to device disconnection, battery death, or API rate limits. The mitigation strategy includes:
+   390→
+   391→- Implementing a **data staleness detector** that marks readings older than 30 minutes as "stale" and adjusts the Physio Agent's confidence accordingly
+   392→- Maintaining a **last-known-good state** so the dashboard continues to display the most recent valid reading
+   393→- Providing **fallback data sources** (manual input prompts when wearable data is unavailable)
+   394→- Designing the Physio Agent to **gracefully degrade** to behavior-only analysis when physiological data is missing
+   395→
+   396→### 7.5 Performance & Latency
+   397→
+   398→Real-time dashboard updates require low-latency processing, but multi-agent pipelines with multiple LLM calls can introduce significant delays. A single input that triggers three agents, each making one LLM call, could take 10–15 seconds in a sequential implementation. Mitigation strategies include:
+   399→
+   400→- **Parallelizing independent agent calls** (all five agents can run simultaneously on different inputs)
+   401→- Implementing **streaming responses** so the dashboard updates incrementally as each agent completes
+   402→- Using **Groq LLaMA for low-latency fallback** when the primary LLM is slow
+   403→- **Caching frequent queries** in Redis
+   404→- Implementing **request prioritization** where crisis signals preempt routine processing
+   405→
+   406→---
+   407→
+   408→## 8. Expected Benefits & Evaluation
+   409→
+   410→### 8.1 Competitive Differentiation
+   411→
+   412→MindGuard's multi-agent, multi-source architecture provides structural advantages that cannot be replicated by teams building single-source mood trackers. The radar chart comparison across six key dimensions illustrates the gap:
+   413→
+   414→| Dimension | MindGuard | Typical Solution |
+   415→|-----------|-----------|-----------------|
+   416→| Real-Time Tracking | 9 | 5 |
+   417→| Multi-Agent Workflow | 9 | 3 |
+   418→| Crisis Detection | 8 | 4 |
+   419→| Multi-Source Input | 9 | 3 |
+   420→| Long-Term Memory | 8 | 2 |
+   421→| Personalized Intervention | 9 | 5 |
+   422→
+   423→The largest differentials are in **multi-agent workflow** (9 vs. 3), **multi-source input** (9 vs. 3), and **long-term memory** (8 vs. 2). These differentials are architectural—they cannot be overcome by simply adding features to a single-agent system.
+   424→
+   425→### 8.2 Student Impact
+   426→
+   427→For students, MindGuard offers three transformative benefits:
+   428→
+   429→1. **Holistic Awareness:** By combining self-reported, behavioral, and physiological data, the system captures a more complete picture of wellness than any single source can provide. Students who under-report distress (a common pattern, especially among male students and in cultures where mental health struggles carry stigma) still receive appropriate support because the Behavior Agent and Physio Agent detect signals that self-reporting misses.
+   430→
+   431→2. **Proactive Intervention:** The Memory Agent's longitudinal tracking enables the system to identify declining trends before they reach crisis levels, triggering early coping strategies and mindfulness exercises that may prevent escalation.
+   432→
+   433→3. **Personalized Care:** The system learns which interventions work for each individual student over time, moving beyond generic advice toward tailored support that respects each student's unique patterns and preferences.
+   434→
+   435→### 8.3 Evaluation Framework
+   436→
+   437→| Evaluation Dimension | Method | Target |
+   438→|---------------------|--------|--------|
+   439→| Technical correctness | Unit tests + integration tests | 95%+ pass rate |
+   440→| Agent accuracy | Labeled dataset evaluation | 80%+ sentiment alignment |
+   441→| Crisis detection | Red-team adversarial testing | 90%+ true positive, <10% false positive |
+   442→| System latency | Load testing (k6 / Locust) | p95 < 5s for text input pipeline |
+   443→| User satisfaction | Student pilot survey (SUS) | Score > 70/100 |
+   444→| Demo impact | PromptWars judge scores | Top 3 placement |
+   445→
+   446→*Table 8: Evaluation Framework*
+   447→
+   448→### 8.4 Post-Hackathon Roadmap
+   449→
+   450→If MindGuard performs well at PromptWars, the team plans to pursue a three-track post-event development strategy:
+   451→
+   452→**Research Track** — Partnering with a university psychology department to conduct a formal IRB-approved study validating the multi-agent approach against single-source baselines, which would provide the clinical evidence necessary for institutional adoption.
+   453→
+   454→**Product Track** — Building native mobile applications, implementing full HIPAA/GDPR compliance infrastructure, and developing a freemium monetization model with institutional licensing for universities.
+   455→
+   456→**Open-Source Track** — Releasing the LangGraph agent templates and ChromaDB integration patterns as open-source libraries, enabling other developers to build similar multi-agent wellness tools and establishing MindGuard as a reference architecture in the mental health technology ecosystem.
+   457→
+   458→Each track operates on a **6-month timeline**, with the first milestone being a pilot deployment at the team's home institution within 3 months of the hackathon.
+   459→
