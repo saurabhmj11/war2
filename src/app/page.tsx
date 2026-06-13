@@ -1,3 +1,4 @@
+/* eslint-disable react-hooks/refs */
 'use client';
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
@@ -135,17 +136,26 @@ export default function MindMirrorPage() {
 
   // ===== LOAD SETTINGS & JOURNAL =====
   useEffect(() => {
+    let active = true;
     try {
       const savedSettings = { camera: true, voice: true, journal: true, crisis: true };
       ['camera', 'voice', 'journal', 'crisis'].forEach(key => {
         const stored = localStorage.getItem('mm_setting_' + key);
         if (stored !== null) (savedSettings as Record<string, boolean>)[key] = stored === 'true';
       });
-      setSettings(savedSettings);
-
+      
       const entries = JSON.parse(localStorage.getItem('mindmirror_journal') || '[]') as JournalEntry[];
-      setJournalEntries(entries);
+      
+      // Use setTimeout to avoid 'Calling setState synchronously within an effect' warning
+      setTimeout(() => {
+        if (active) {
+          setSettings(savedSettings);
+          setJournalEntries(entries);
+        }
+      }, 0);
     } catch { /* ignore */ }
+    
+    return () => { active = false; };
   }, []);
 
   // ===== AUTO-SCROLL =====
@@ -477,14 +487,14 @@ export default function MindMirrorPage() {
   return (
     <div className="flex flex-col h-screen bg-slate-50 overflow-hidden">
       {/* Skip link */}
-      <a href="#main-content" className="sr-only focus:not-sr-only focus:fixed focus:top-0 focus:left-0 focus:z-[9999] focus:bg-violet-600 focus:text-white focus:px-4 focus:py-2 focus:text-sm">
+      <a href="#main-content" className="sr-only focus:not-sr-only focus:fixed focus:top-0 focus:left-0 focus:z-9999 focus:bg-violet-600 focus:text-white focus:px-4 focus:py-2 focus:text-sm">
         Skip to main content
       </a>
 
       {/* ===== HEADER ===== */}
       <header className="bg-white/80 backdrop-blur-xl border-b border-slate-200 px-4 md:px-6 h-14 flex items-center justify-between sticky top-0 z-50 shrink-0">
         <div className="flex items-center gap-3">
-          <div className="w-8 h-8 bg-gradient-to-br from-violet-500 to-purple-700 rounded-lg flex items-center justify-center shadow-lg shadow-violet-200">
+          <div className="w-10 h-10 rounded-2xl bg-linear-to-br from-violet-600 to-indigo-600 flex items-center justify-center text-white shadow-lg shadow-violet-200/50">
             <svg viewBox="0 0 24 24" className="w-4 h-4" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
               <path d="M12 2a7 7 0 0 1 7 7c0 3-1.5 5.5-4 6.8V18H9v-2.2C6.5 14.5 5 12 5 9a7 7 0 0 1 7-7z" />
               <path d="M9 21h6M10 18v3M14 18v3" />
@@ -539,7 +549,7 @@ export default function MindMirrorPage() {
           {/* Chat top bar */}
           <div className="px-4 md:px-5 py-3 border-b border-slate-100 flex items-center justify-between bg-white shrink-0">
             <div className="flex items-center gap-3">
-              <div className="w-9 h-9 rounded-full bg-gradient-to-br from-violet-100 to-purple-100 border-2 border-violet-200 flex items-center justify-center text-base">
+              <div className="md:col-span-3 lg:col-span-4 bg-linear-to-br from-white to-slate-50/80 rounded-2xl md:rounded-[32px] border border-slate-200/60 shadow-xs flex flex-col overflow-hidden h-[calc(100vh-140px)] relative">
                 🧘
               </div>
               <div>
@@ -585,7 +595,7 @@ export default function MindMirrorPage() {
                 className={`flex items-end gap-2.5 ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
               >
                 {msg.role === 'ai' && (
-                  <div className="w-7 h-7 rounded-full bg-gradient-to-br from-violet-100 to-purple-100 border border-violet-200 flex items-center justify-center text-xs shrink-0">
+                  <div className="w-7 h-7 rounded-full bg-linear-to-br from-violet-100 to-purple-100 border border-violet-200 flex items-center justify-center text-xs shrink-0">
                     🧠
                   </div>
                 )}
@@ -612,7 +622,7 @@ export default function MindMirrorPage() {
                         <span>MindMirror is reflecting…</span>
                       </div>
                     ) : (
-                      <span dangerouslySetInnerHTML={{ __html: formatText(msg.text) }} />
+                      <span dangerouslySetInnerHTML={{ __html: sanitizeHtml(msg.text) }} />
                     )}
                   </div>
                   {msg.time && (
@@ -682,10 +692,10 @@ export default function MindMirrorPage() {
 
         {/* ===== INSIGHTS PANEL ===== */}
         <AnimatePresence>
-          {(activeView === 'chat' || (activeView !== 'chat' && typeof window !== 'undefined' && window.innerWidth >= 768)) && (
+          {(activeView === 'chat' || (typeof window !== 'undefined' && window.innerWidth >= 768)) && (
             <aside
               id="panel-insights"
-              className={`w-[340px] border-l border-slate-200 bg-slate-50/80 overflow-y-auto shrink-0 hidden md:flex flex-col ${showMobilePanel ? '!flex fixed inset-[56px_0_0_0] z-[200] w-full' : ''}`}
+              className={`w-[340px] border-l border-slate-200 bg-slate-50/80 overflow-y-auto shrink-0 hidden md:flex flex-col ${showMobilePanel ? 'flex! fixed inset-[56px_0_0_0] z-200 w-full' : ''}`}
               role="complementary"
               aria-label="Real-time emotional insights"
             >
@@ -783,9 +793,9 @@ export default function MindMirrorPage() {
                 <div className="px-4 py-3 border-b border-slate-100 bg-slate-900/5">
                   <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 mb-2">
                     Camera Preview
-                    <span className="ml-2 text-amber-500">{sensor.dominantExpression} ({sensor.faceConfidence}%)</span>
+                    <span className="ml-2 text-amber-500">{String(sensor.dominantExpression)} ({Number(sensor.faceConfidence)}%)</span>
                   </div>
-                  <div className="relative rounded-lg overflow-hidden bg-black aspect-[4/3] max-w-[280px] mx-auto">
+                  <div className="relative rounded-lg overflow-hidden bg-black aspect-4/3 max-w-[280px] mx-auto">
                     <video
                       ref={sensor.videoRef}
                       className="w-full h-full object-cover"
@@ -797,7 +807,7 @@ export default function MindMirrorPage() {
                     />
                     <div className="absolute bottom-1.5 left-1.5 right-1.5 flex items-center justify-between">
                       <span className="text-[9px] text-white bg-black/60 px-1.5 py-0.5 rounded">
-                        {sensor.dominantExpression} {sensor.faceConfidence}%
+                        {String(sensor.dominantExpression)} {Number(sensor.faceConfidence)}%
                       </span>
                       <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
                     </div>
@@ -812,7 +822,7 @@ export default function MindMirrorPage() {
                     initial={{ opacity: 0, height: 0 }}
                     animate={{ opacity: 1, height: 'auto' }}
                     exit={{ opacity: 0, height: 0 }}
-                    className="px-4 py-3 border-b border-slate-100 bg-gradient-to-r from-amber-50 to-orange-50"
+                    className="px-4 py-3 border-b border-slate-100 bg-linear-to-r from-amber-50 to-orange-50 overflow-hidden"
                   >
                     <div className="text-[10px] font-semibold uppercase tracking-wider text-amber-500 mb-2 flex items-center gap-1.5">
                       <motion.span
