@@ -1,0 +1,575 @@
+     1→'use client';
+     2→
+     3→import React, { useState, useRef, useEffect, useCallback } from 'react';
+     4→
+     5→// ===== TYPES =====
+     6→interface Meta {
+     7→  textSentiment?: string;
+     8→  voiceTone?: string;
+     9→  faceSignal?: string;
+    10→  triggers?: Record<string, number>;
+    11→  burnout?: number;
+    12→  confidence?: number;
+    13→  contradictionDetected?: boolean;
+    14→  contradictionType?: string;
+    15→  adaptiveQuestion?: string;
+    16→  insight?: string;
+    17→  crisisFlag?: boolean;
+    18→}
+    19→
+    20→interface Message {
+    21→  id: string;
+    22→  role: 'user' | 'ai';
+    23→  text: string;
+    24→  time: string;
+    25→  isCrisis?: boolean;
+    26→}
+    27→
+    28→interface JournalEntry {
+    29→  id: number;
+    30→  date: string;
+    31→  summary: string;
+    32→  tags: string[];
+    33→}
+    34→
+    35→// ===== BADGE MAPS =====
+    36→const sentimentBadge: Record<string, string> = {
+    37→  neutral: 'badge-neutral', anxious: 'badge-anxious', stressed: 'badge-stressed',
+    38→  sad: 'badge-sad', overwhelmed: 'badge-stressed', hopeful: 'badge-calm'
+    39→};
+    40→const toneBadge: Record<string, string> = {
+    41→  calm: 'badge-calm', strained: 'badge-anxious', flat: 'badge-neutral',
+    42→  tired: 'badge-anxious', tense: 'badge-stressed', energetic: 'badge-calm'
+    43→};
+    44→const faceBadge: Record<string, string> = {
+    45→  relaxed: 'badge-calm', tense: 'badge-stressed', sad: 'badge-sad',
+    46→  blank: 'badge-neutral', worried: 'badge-anxious', engaged: 'badge-calm'
+    47→};
+    48→
+    49→const moodScoreMap: Record<string, number> = {
+    50→  hopeful: 90, neutral: 60, calm: 75, anxious: 35, stressed: 25, sad: 20, overwhelmed: 15
+    51→};
+    52→
+    53→const QUICK_REPLIES = [
+    54→  "I'm fine, just tired",
+    55→  "Physics is really stressing me out",
+    56→  "Mock tests didn't go well again",
+    57→  "I don't know if I can do this",
+    58→  "I studied all day but feel worse"
+    59→];
+    60→
+    61→export default function MindMirrorPage() {
+    62→  // ===== STATE =====
+    63→  const [messages, setMessages] = useState<Message[]>([
+    64→    { id: 'welcome', role: 'ai', text: "Hi! I'm MindMirror — your personal wellness companion. I'm here to listen without judgment.\n\nHow are you feeling about your exam preparation today?", time: 'Just now' }
+    65→  ]);
+    66→  const [inputText, setInputText] = useState('');
+    67→  const [isLoading, setIsLoading] = useState(false);
+    68→  const [activeView, setActiveView] = useState<'chat' | 'journal' | 'privacy'>('chat');
+    69→  const [showMobilePanel, setShowMobilePanel] = useState(false);
+    70→
+    71→  // Insight panel state
+    72→  const [textSentiment, setTextSentiment] = useState('neutral');
+    73→  const [voiceTone, setVoiceTone] = useState('calm');
+    74→  const [faceSignal, setFaceSignal] = useState('relaxed');
+    75→  const [triggers, setTriggers] = useState<Record<string, number>>({});
+    76→  const [burnout, setBurnout] = useState(0);
+    77→  const [moodHistory, setMoodHistory] = useState<number[]>([]);
+    78→  const [insight, setInsight] = useState('');
+    79→  const [showInsight, setShowInsight] = useState(false);
+    80→  const [contradiction, setContradiction] = useState<{ detected: boolean; type: string; question: string } | null>(null);
+    81→
+    82→  // Journal state
+    83→  const [journalEntries, setJournalEntries] = useState<JournalEntry[]>([]);
+    84→
+    85→  // Settings state
+    86→  const [settings, setSettings] = useState({ camera: true, voice: true, journal: true, crisis: true });
+    87→
+    88→  // Conversation history for API
+    89→  const conversationHistory = useRef<{ role: string; content: string }[]>([]);
+    90→  const messagesEndRef = useRef<HTMLDivElement>(null);
+    91→  const textareaRef = useRef<HTMLTextAreaElement>(null);
+    92→
+    93→  // ===== LOAD SETTINGS & JOURNAL =====
+    94→  useEffect(() => {
+    95→    try {
+    96→      const savedSettings = { camera: true, voice: true, journal: true, crisis: true };
+    97→      ['camera', 'voice', 'journal', 'crisis'].forEach(key => {
+    98→        const stored = localStorage.getItem('mm_setting_' + key);
+    99→        if (stored !== null) (savedSettings as Record<string, boolean>)[key] = stored === 'true';
+   100→      });
+   101→      setSettings(savedSettings);
+   102→
+   103→      const entries = JSON.parse(localStorage.getItem('mindmirror_journal') || '[]') as JournalEntry[];
+   104→      setJournalEntries(entries);
+   105→    } catch { /* ignore */ }
+   106→  }, []);
+   107→
+   108→  // ===== AUTO-SCROLL =====
+   109→  useEffect(() => {
+   110→    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+   111→  }, [messages]);
+   112→
+   113→  // ===== AUTO-RESIZE TEXTAREA =====
+   114→  useEffect(() => {
+   115→    if (textareaRef.current) {
+   116→      textareaRef.current.style.height = 'auto';
+   117→      textareaRef.current.style.height = Math.min(textareaRef.current.scrollHeight, 120) + 'px';
+   118→    }
+   119→  }, [inputText]);
+   120→
+   121→  // ===== GET TIME =====
+   122→  const getTime = () => new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
+   123→
+   124→  // ===== EXTRACT TAGS =====
+   125→  const extractTags = (text: string): string[] => {
+   126→    const subjects = ['Physics', 'Chemistry', 'Math', 'Maths', 'Biology', 'English', 'History', 'Geography', 'Economics'];
+   127→    const tags: string[] = [];
+   128→    subjects.forEach(s => { if (text.toLowerCase().includes(s.toLowerCase())) tags.push(s); });
+   129→    if (/stress|stressed|pressure/i.test(text)) tags.push('stress');
+   130→    if (/tired|exhaust|burnout/i.test(text)) tags.push('burnout');
+   131→    if (/can't|cannot|give up/i.test(text)) tags.push('self-doubt');
+   132→    return tags.slice(0, 4);
+   133→  };
+   134→
+   135→  // ===== SAVE TO JOURNAL =====
+   136→  const saveToJournal = useCallback(() => {
+   137→    if (!settings.journal) return;
+   138→    try {
+   139→      const summary = conversationHistory.current
+   140→        .filter(m => m.role === 'user')
+   141→        .map(m => m.content)
+   142→        .join(' ');
+   143→      if (!summary.trim()) return;
+   144→
+   145→      const entry: JournalEntry = {
+   146→        id: Date.now(),
+   147→        date: new Date().toLocaleString('en-IN'),
+   148→        summary: summary.slice(0, 300),
+   149→        tags: extractTags(summary),
+   150→      };
+   151→      const entries = [entry, ...journalEntries].slice(0, 50);
+   152→      setJournalEntries(entries);
+   153→      localStorage.setItem('mindmirror_journal', JSON.stringify(entries));
+   154→    } catch { /* ignore */ }
+   155→  }, [settings.journal, journalEntries]);
+   156→
+   157→  // ===== SEND MESSAGE =====
+   158→  const sendMessage = async (overrideText?: string) => {
+   159→    const text = (overrideText || inputText).trim();
+   160→    if (!text || isLoading) return;
+   161→
+   162→    setIsLoading(true);
+   163→    setInputText('');
+   164→
+   165→    // Add user message
+   166→    const userMsg: Message = { id: `u-${Date.now()}`, role: 'user', text, time: getTime() };
+   167→    setMessages(prev => [...prev, userMsg]);
+   168→
+   169→    // Add thinking indicator
+   170→    const thinkingMsg: Message = { id: 'thinking', role: 'ai', text: 'Thinking…', time: '' };
+   171→    setMessages(prev => [...prev, thinkingMsg]);
+   172→
+   173→    // Add to conversation history
+   174→    conversationHistory.current.push({ role: 'user', content: text });
+   175→
+   176→    try {
+   177→      const response = await fetch('/api/chat', {
+   178→        method: 'POST',
+   179→        headers: { 'Content-Type': 'application/json' },
+   180→        body: JSON.stringify({
+   181→          messages: conversationHistory.current.slice(-20),
+   182→          faceSignal: faceSignal !== 'relaxed' ? faceSignal : undefined,
+   183→          voiceTone: voiceTone !== 'calm' ? voiceTone : undefined,
+   184→        }),
+   185→      });
+   186→
+   187→      if (!response.ok) throw new Error('API error');
+   188→
+   189→      const data = await response.json();
+   190→      const { reply, meta } = data;
+   191→
+   192→      // Add AI message (replace thinking)
+   193→      const aiMsg: Message = { id: `a-${Date.now()}`, role: 'ai', text: reply || "I'm here. Could you tell me more?", time: getTime() };
+   194→      setMessages(prev => prev.filter(m => m.id !== 'thinking').concat(aiMsg));
+   195→
+   196→      // Add crisis message if flagged
+   197→      if (meta?.crisisFlag && settings.crisis) {
+   198→        const crisisMsg: Message = {
+   199→          id: `c-${Date.now()}`,
+   200→          role: 'ai',
+   201→          text: "I want to make sure you're okay. If things feel really heavy right now, please reach out to a counselor:\n\n📞 iCall: 9152987821\n📞 Vandrevala Foundation: 1860-2662-345\n\nThey're trained to listen, and you deserve support beyond what I can offer.",
+   202→          time: getTime(),
+   203→          isCrisis: true
+   204→        };
+   205→        setMessages(prev => [...prev, crisisMsg]);
+   206→      }
+   207→
+   208→      // Update conversation history
+   209→      conversationHistory.current.push({ role: 'assistant', content: reply });
+   210→
+   211→      // Debug: log meta to verify data
+   212→      console.log('[MindMirror] AI meta:', JSON.stringify(meta));
+   213→
+   214→      // Update insight panel
+   215→      if (meta) {
+   216→        if (meta.textSentiment) setTextSentiment(meta.textSentiment);
+   217→        if (meta.voiceTone) setVoiceTone(meta.voiceTone);
+   218→        if (meta.faceSignal) setFaceSignal(meta.faceSignal);
+   219→        if (meta.triggers && Object.keys(meta.triggers).length > 0) setTriggers(meta.triggers);
+   220→        if (typeof meta.burnout === 'number') setBurnout(meta.burnout);
+   221→        if (meta.textSentiment) {
+   222→          const score = moodScoreMap[meta.textSentiment] ?? 50;
+   223→          console.log('[MindMirror] Mood update:', meta.textSentiment, '→ score:', score);
+   224→          setMoodHistory(prev => {
+   225→            const next = [...prev, score].slice(-8);
+   226→            console.log('[MindMirror] moodHistory:', next);
+   227→            return next;
+   228→          });
+   229→        }
+   230→        if (meta.insight) {
+   231→          setInsight(meta.insight);
+   232→          setShowInsight(true);
+   233→        }
+   234→        if (meta.contradictionDetected) {
+   235→          setContradiction({
+   236→            detected: true,
+   237→            type: meta.contradictionType || 'verbal-vs-facial',
+   238→            question: meta.adaptiveQuestion || ''
+   239→          });
+   240→        } else {
+   241→          setContradiction(null);
+   242→        }
+   243→      }
+   244→
+   245→      // Save to journal
+   246→      saveToJournal();
+   247→    } catch (err) {
+   248→      setMessages(prev => prev.filter(m => m.id !== 'thinking').concat({
+   249→        id: `e-${Date.now()}`, role: 'ai', text: "I had trouble connecting. Please try again.", time: getTime()
+   250→      }));
+   251→      console.error('API error:', err);
+   252→    }
+   253→
+   254→    setIsLoading(false);
+   255→  };
+   256→
+   257→  // ===== CLEAR SESSION =====
+   258→  const clearSession = () => {
+   259→    if (!confirm('Start a new session? Current conversation will be saved to the journal.')) return;
+   260→    saveToJournal();
+   261→    conversationHistory.current = [];
+   262→    setMessages([
+   263→      { id: 'new-welcome', role: 'ai', text: "Hi again! Ready for a new session. How are you feeling right now?", time: 'Just now' }
+   264→    ]);
+   265→    setMoodHistory([]);
+   266→    setBurnout(0);
+   267→    setTriggers({});
+   268→    setInsight('');
+   269→    setShowInsight(false);
+   270→    setContradiction(null);
+   271→    setTextSentiment('neutral');
+   272→    setVoiceTone('calm');
+   273→    setFaceSignal('relaxed');
+   274→  };
+   275→
+   276→  // ===== EXPORT / DELETE DATA =====
+   277→  const exportData = () => {
+   278→    try {
+   279→      const blob = new Blob([JSON.stringify(journalEntries, null, 2)], { type: 'application/json' });
+   280→      const url = URL.createObjectURL(blob);
+   281→      const a = document.createElement('a');
+   282→      a.href = url; a.download = 'mindmirror_journal.json'; a.click();
+   283→      URL.revokeObjectURL(url);
+   284→    } catch { /* ignore */ }
+   285→  };
+   286→
+   287→  const deleteData = () => {
+   288→    if (!confirm('Delete all journal entries? This cannot be undone.')) return;
+   289→    localStorage.removeItem('mindmirror_journal');
+   290→    setJournalEntries([]);
+   291→  };
+   292→
+   293→  // ===== RENDER =====
+   294→  const sortedTriggers = Object.entries(triggers).sort(([, a], [, b]) => b - a).slice(0, 6);
+   295→  const burnoutLabel = burnout >= 70 ? 'High' : burnout >= 40 ? 'Moderate' : burnout > 0 ? 'Low' : '—';
+   296→  const burnoutColor = burnout >= 70 ? '#A32D2D' : burnout >= 40 ? '#854F0B' : '#0F6E56';
+   297→  const burnoutDesc = burnout >= 70 ? 'Consider taking a real break today.' : burnout >= 40 ? "You're pushing hard. Rest matters." : burnout > 0 ? "You're managing well right now." : 'No data yet';
+   298→
+   299→  return (
+   300→    <>
+   301→      <a href="#main-content" className="skip-link">Skip to main content</a>
+   302→      <div aria-live="polite" aria-atomic="true" className="sr-only" id="sr-announce" />
+   303→
+   304→      {/* HEADER */}
+   305→      <header className="mm-header" role="banner">
+   306→        <a href="#" className="mm-logo" aria-label="MindMirror home">
+   307→          <div className="mm-logo-icon" aria-hidden="true">
+   308→            <svg viewBox="0 0 24 24"><path d="M12 2a7 7 0 0 1 7 7c0 3-1.5 5.5-4 6.8V18H9v-2.2C6.5 14.5 5 12 5 9a7 7 0 0 1 7-7z"/><path d="M9 21h6M10 18v3M14 18v3"/></svg>
+   309→          </div>
+   310→          <span className="mm-logo-text">MindMirror<span className="mm-logo-tag"> beta</span></span>
+   311→        </a>
+   312→        <nav className="mm-nav" role="navigation" aria-label="App sections">
+   313→          <button className={`mm-nav-btn ${activeView === 'chat' ? 'active' : ''}`} onClick={() => setActiveView('chat')} aria-pressed={activeView === 'chat'}>Session</button>
+   314→          <button className={`mm-nav-btn ${activeView === 'journal' ? 'active' : ''}`} onClick={() => setActiveView('journal')} aria-pressed={activeView === 'journal'}>Journal</button>
+   315→          <button className={`mm-nav-btn ${activeView === 'privacy' ? 'active' : ''}`} onClick={() => setActiveView('privacy')} aria-pressed={activeView === 'privacy'}>Privacy</button>
+   316→          <button className="mm-nav-btn" onClick={() => setShowMobilePanel(!showMobilePanel)} aria-label="Toggle insights panel" style={{ display: 'none' }}>📊</button>
+   317→        </nav>
+   318→      </header>
+   319→
+   320→      {/* MAIN */}
+   321→      <main className="mm-main" id="main-content" role="main">
+   322→
+   323→        {/* ===== CHAT VIEW ===== */}
+   324→        <section id="view-chat" className={`view ${activeView === 'chat' ? 'active' : ''}`} aria-label="Conversation session">
+   325→          <div className="chat-topbar">
+   326→            <div className="session-info">
+   327→              <div className="avatar" aria-hidden="true">🧘</div>
+   328→              <div>
+   329→                <div className="session-name">MindMirror</div>
+   330→                <div className="session-sub"><span className="status-dot" aria-hidden="true" />Listening actively</div>
+   331→              </div>
+   332→            </div>
+   333→            <button className="mm-nav-btn" onClick={clearSession} aria-label="Start new session">New session</button>
+   334→          </div>
+   335→
+   336→          <div className="messages" role="log" aria-label="Conversation messages" aria-live="polite" tabIndex={0}>
+   337→            {messages.map(msg => (
+   338→              <div key={msg.id} className={`msg-wrap ${msg.role === 'user' ? 'user' : 'ai'}`}>
+   339→                <div className={`msg-avatar ${msg.role}`} aria-hidden="true">{msg.role === 'ai' ? '🧠' : '🎓'}</div>
+   340→                <div>
+   341→                  <div className={`msg-bubble ${msg.role} ${msg.isCrisis ? 'crisis' : ''} ${msg.id === 'thinking' ? 'thinking' : ''}`}
+   342→                    role={msg.isCrisis ? 'alert' : 'article'}
+   343→                    aria-label={msg.role === 'ai' ? 'MindMirror says' : 'You said'}
+   344→                    dangerouslySetInnerHTML={{ __html: msg.text.replace(/\n/g, '<br>') }}
+   345→                  />
+   346→                  {msg.time && <div className="msg-time">{msg.time}</div>}
+   347→                </div>
+   348→              </div>
+   349→            ))}
+   350→            <div ref={messagesEndRef} />
+   351→          </div>
+   352→
+   353→          <div className="quick-replies" role="group" aria-label="Suggested replies">
+   354→            <span className="qr-label">Quick replies</span>
+   355→            {QUICK_REPLIES.map(qr => (
+   356→              <button key={qr} className="qr-btn" onClick={() => sendMessage(qr)}>{qr}</button>
+   357→            ))}
+   358→          </div>
+   359→
+   360→          <div className="input-row">
+   361→            <textarea
+   362→              ref={textareaRef}
+   363→              className="chat-input"
+   364→              placeholder="Share what's on your mind…"
+   365→              rows={1}
+   366→              aria-label="Message input"
+   367→              value={inputText}
+   368→              onChange={e => setInputText(e.target.value)}
+   369→              onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } }}
+   370→              disabled={isLoading}
+   371→            />
+   372→            <button className="send-btn" onClick={() => sendMessage()} disabled={!inputText.trim() || isLoading} aria-label="Send message">
+   373→              <svg viewBox="0 0 24 24"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+   374→            </button>
+   375→          </div>
+   376→        </section>
+   377→
+   378→        {/* ===== INSIGHTS PANEL ===== */}
+   379→        <aside id="panel-insights" className={showMobilePanel ? 'mobile-open' : ''} role="complementary" aria-label="Real-time emotional insights" style={{ display: activeView === 'chat' ? '' : 'none' }}>
+   380→
+   381→          {/* Signal Analysis */}
+   382→          <div className="panel-section">
+   383→            <div className="panel-title">Signal analysis</div>
+   384→            <div className="signals">
+   385→              <div className="signal-item">
+   386→                <div className="signal-icon text" aria-hidden="true">
+   387→                  <svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+   388→                </div>
+   389→                <div><div className="signal-label">Text tone</div><span className={`signal-badge ${sentimentBadge[textSentiment] || 'badge-neutral'}`}>{textSentiment.charAt(0).toUpperCase() + textSentiment.slice(1)}</span></div>
+   390→              </div>
+   391→              <div className="signal-item">
+   392→                <div className="signal-icon voice" aria-hidden="true">
+   393→                  <svg viewBox="0 0 24 24"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2M12 19v4M8 23h8"/></svg>
+   394→                </div>
+   395→                <div><div className="signal-label">Voice energy</div><span className={`signal-badge ${toneBadge[voiceTone] || 'badge-neutral'}`}>{voiceTone.charAt(0).toUpperCase() + voiceTone.slice(1)}</span></div>
+   396→              </div>
+   397→              <div className="signal-item">
+   398→                <div className="signal-icon face" aria-hidden="true">
+   399→                  <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2M9 9h.01M15 9h.01"/></svg>
+   400→                </div>
+   401→                <div><div className="signal-label">Facial signal</div><span className={`signal-badge ${faceBadge[faceSignal] || 'badge-neutral'}`}>{faceSignal.charAt(0).toUpperCase() + faceSignal.slice(1)}</span></div>
+   402→              </div>
+   403→            </div>
+   404→          </div>
+   405→
+   406→          {/* Contradiction Alert */}
+   407→          {contradiction?.detected && (
+   408→            <div className="panel-section">
+   409→              <div className="panel-title">Contradiction detected</div>
+   410→              <div className="contradiction-alert">
+   411→                <div className="contradiction-header">
+   412→                  <span style={{ fontSize: 14 }}>⚡</span>
+   413→                  <span className="contradiction-title">{contradiction.type.replace(/-/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}</span>
+   414→                </div>
+   415→                <div className="contradiction-text">
+   416→                  Your words and signals don&apos;t match. MindMirror is adapting its questions to probe deeper.
+   417→                  {contradiction.question && <><br /><strong>Adaptive question: </strong>&ldquo;{contradiction.question}&rdquo;</>}
+   418→                </div>
+   419→              </div>
+   420→            </div>
+   421→          )}
+   422→
+   423→          {/* Stress Triggers */}
+   424→          <div className="panel-section">
+   425→            <div className="panel-title">Stress triggers detected</div>
+   426→            {sortedTriggers.length === 0 ? (
+   427→              <div className="empty-state">Start talking — patterns will appear here</div>
+   428→            ) : (
+   429→              <div className="trigger-list">
+   430→                {sortedTriggers.map(([name, val]) => (
+   431→                  <div key={name} className="trigger-row">
+   432→                    <span className="trigger-name" title={name}>{name}</span>
+   433→                    <div className="trigger-track">
+   434→                      <div className={`trigger-fill ${val >= 70 ? 'fill-high' : val >= 40 ? 'fill-mid' : 'fill-low'}`}
+   435→                        style={{ width: `${val}%` }} role="img" aria-label={`${name} stress level ${val}%`} />
+   436→                    </div>
+   437→                    <span className="trigger-pct">{val}%</span>
+   438→                  </div>
+   439→                ))}
+   440→              </div>
+   441→            )}
+   442→          </div>
+   443→
+   444→          {/* Burnout Risk */}
+   445→          <div className="panel-section">
+   446→            <div className="panel-title">Burnout risk</div>
+   447→            <div className="burnout-wrap">
+   448→              <div className="burnout-track" role="progressbar" aria-label="Burnout risk level" aria-valuenow={burnout} aria-valuemin={0} aria-valuemax={100}>
+   449→                <div className="burnout-fill" style={{ width: `${burnout}%` }} />
+   450→              </div>
+   451→              <div className="burnout-meta">
+   452→                <span className="burnout-label" style={{ color: burnoutColor }}>{burnoutLabel}</span>
+   453→                <span className="burnout-pct">{burnout > 0 ? `${burnout}%` : '—'}</span>
+   454→              </div>
+   455→              <div className="burnout-desc">{burnoutDesc}</div>
+   456→            </div>
+   457→          </div>
+   458→
+   459→          {/* Mood Timeline */}
+   460→          <div className="panel-section">
+   461→            <div className="panel-title">Mood over session</div>
+   462→            <div className="mood-timeline" aria-label="Mood trend visualization">
+   463→              {Array.from({ length: 8 }).map((_, i) => {
+   464→                const val = moodHistory[i];
+   465→                if (val == null) return <div key={i} className="mood-bar-empty" aria-hidden="true" />;
+   466→                const h = Math.round(6 + (val / 100) * 42);
+   467→                const cls = val >= 65 ? 'high' : val >= 40 ? 'mid' : 'low';
+   468→                return <div key={i} className={`mood-bar ${cls}`} style={{ height: `${h}px` }} aria-label={`Mood ${val}%`} />;
+   469→              })}
+   470→            </div>
+   471→          </div>
+   472→
+   473→          {/* Personalized Insight */}
+   474→          <div className="panel-section" aria-live="polite">
+   475→            <div className="panel-title">Personalized insight</div>
+   476→            {showInsight && insight ? (
+   477→              <div className="insight-card">
+   478→                <div className="insight-card-header" aria-hidden="true">
+   479→                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#534AB7" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+   480→                  <span className="insight-card-title">Pattern found</span>
+   481→                </div>
+   482→                <p className="insight-text">{insight}</p>
+   483→              </div>
+   484→            ) : (
+   485→              <div className="empty-state">Insight appears after a few exchanges</div>
+   486→            )}
+   487→          </div>
+   488→        </aside>
+   489→
+   490→        {/* ===== JOURNAL VIEW ===== */}
+   491→        <section id="view-journal" className={`view ${activeView === 'journal' ? 'active' : ''}`} aria-label="Journal entries">
+   492→          <div className="journal-header">
+   493→            <h1>Your journal</h1>
+   494→            <p>Every conversation is saved here. Patterns are discovered across entries over time.</p>
+   495→          </div>
+   496→          <div className="journal-entries">
+   497→            {journalEntries.length === 0 ? (
+   498→              <div className="empty-state">No entries yet. Start a session to record your first journal entry.</div>
+   499→            ) : journalEntries.map(e => (
+   500→              <article key={e.id} className="journal-entry" tabIndex={0} aria-label={`Journal entry from ${e.date}`}>
+   501→                <div className="entry-date">{e.date}</div>
+   502→                <div className="entry-text">{e.summary}</div>
+   503→                <div className="entry-tags">
+   504→                  {e.tags.map(t => (
+   505→                    <span key={t} className={`entry-tag ${t === 'stress' || t === 'self-doubt' ? 'stress' : t === 'burnout' ? 'burnout' : ''}`}>{t}</span>
+   506→                  ))}
+   507→                </div>
+   508→              </article>
+   509→            ))}
+   510→          </div>
+   511→        </section>
+   512→
+   513→        {/* ===== PRIVACY VIEW ===== */}
+   514→        <section id="view-privacy" className={`view ${activeView === 'privacy' ? 'active' : ''}`} aria-label="Privacy and settings">
+   515→          <div className="settings-wrap">
+   516→            <h1>Privacy &amp; settings</h1>
+   517→            <p className="sub">You own your data. MindMirror never stores raw video or audio. You control everything.</p>
+   518→
+   519→            <div className="privacy-notice" role="note">
+   520→              <strong>Data stays with you.</strong> All conversation analysis runs through the AI API securely. No raw camera footage or voice recordings are stored or transmitted. Your journal entries are saved locally in your browser only.
+   521→            </div>
+   522→
+   523→            <div className="setting-group" role="group" aria-label="Session settings">
+   524→              {(['camera', 'voice', 'journal', 'crisis'] as const).map(key => (
+   525→                <div key={key} className="setting-row">
+   526→                  <div className="setting-info">
+   527→                    <div className="setting-label">Enable {key} {key === 'camera' ? 'analysis' : key === 'voice' ? 'analysis' : key === 'journal' ? 'entries' : 'resource prompts'}</div>
+   528→                    <div className="setting-desc">{
+   529→                      key === 'camera' ? 'Detects facial expressions during sessions. Never recorded.'
+   530→                      : key === 'voice' ? 'Analyzes tone and energy. Raw audio is discarded immediately.'
+   531→                      : key === 'journal' ? 'Stores session transcripts locally for pattern discovery.'
+   532→                      : 'Show iCall / Vandrevala helpline when severe distress is detected.'
+   533→                    }</div>
+   534→                  </div>
+   535→                  <label className="toggle" aria-label={`Enable ${key}`}>
+   536→                    <input type="checkbox" checked={settings[key]} onChange={e => {
+   537→                      const val = e.target.checked;
+   538→                      setSettings(prev => ({ ...prev, [key]: val }));
+   539→                      localStorage.setItem('mm_setting_' + key, String(val));
+   540→                    }} />
+   541→                    <span className="toggle-track" />
+   542→                    <span className="toggle-thumb" />
+   543→                  </label>
+   544→                </div>
+   545→              ))}
+   546→            </div>
+   547→
+   548→            <div className="setting-group" role="group" aria-label="Data controls">
+   549→              <div className="setting-row">
+   550→                <div className="setting-info">
+   551→                  <div className="setting-label">Export my data</div>
+   552→                  <div className="setting-desc">Download all journal entries as JSON.</div>
+   553→                </div>
+   554→                <button className="mm-nav-btn" onClick={exportData} aria-label="Download journal data">Download</button>
+   555→              </div>
+   556→              <div className="setting-row">
+   557→                <div className="setting-info">
+   558→                  <div className="setting-label">Delete all data</div>
+   559→                  <div className="setting-desc">Permanently removes all local journal entries.</div>
+   560→                </div>
+   561→                <button className="mm-nav-btn delete-btn" onClick={deleteData} aria-label="Delete all data">Delete</button>
+   562→              </div>
+   563→            </div>
+   564→
+   565→            <div className="not-therapy" role="note">
+   566→              <strong>⚠ Important:</strong> MindMirror is a wellness companion, not a therapist or medical device. It does not diagnose or treat mental health conditions. If you are in crisis, please contact <strong>iCall: 9152987821</strong> or <strong>Vandrevala Foundation: 1860-2662-345</strong>.
+   567→            </div>
+   568→          </div>
+   569→        </section>
+   570→
+   571→      </main>
+   572→    </>
+   573→  );
+   574→}
+   575→

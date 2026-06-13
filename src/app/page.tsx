@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
 
 // ===== TYPES =====
 interface Meta {
@@ -23,6 +24,7 @@ interface Message {
   text: string;
   time: string;
   isCrisis?: boolean;
+  meta?: Meta;
 }
 
 interface JournalEntry {
@@ -30,38 +32,62 @@ interface JournalEntry {
   date: string;
   summary: string;
   tags: string[];
+  mood?: string;
 }
 
-// ===== BADGE MAPS =====
-const sentimentBadge: Record<string, string> = {
-  neutral: 'badge-neutral', anxious: 'badge-anxious', stressed: 'badge-stressed',
-  sad: 'badge-sad', overwhelmed: 'badge-stressed', hopeful: 'badge-calm'
-};
-const toneBadge: Record<string, string> = {
-  calm: 'badge-calm', strained: 'badge-anxious', flat: 'badge-neutral',
-  tired: 'badge-anxious', tense: 'badge-stressed', energetic: 'badge-calm'
-};
-const faceBadge: Record<string, string> = {
-  relaxed: 'badge-calm', tense: 'badge-stressed', sad: 'badge-sad',
-  blank: 'badge-neutral', worried: 'badge-anxious', engaged: 'badge-calm'
-};
-
+// ===== CONSTANTS =====
 const moodScoreMap: Record<string, number> = {
   hopeful: 90, neutral: 60, calm: 75, anxious: 35, stressed: 25, sad: 20, overwhelmed: 15
 };
 
+const moodEmojiMap: Record<string, string> = {
+  hopeful: '🌤️', neutral: '😐', calm: '😌', anxious: '😰', stressed: '😤', sad: '😢', overwhelmed: '🤯'
+};
+
+const sentimentColorMap: Record<string, string> = {
+  neutral: 'bg-slate-100 text-slate-700',
+  anxious: 'bg-amber-50 text-amber-700',
+  stressed: 'bg-rose-50 text-rose-700',
+  sad: 'bg-violet-50 text-violet-700',
+  overwhelmed: 'bg-rose-50 text-rose-700',
+  hopeful: 'bg-emerald-50 text-emerald-700'
+};
+
+const toneColorMap: Record<string, string> = {
+  calm: 'bg-emerald-50 text-emerald-700',
+  strained: 'bg-amber-50 text-amber-700',
+  flat: 'bg-slate-100 text-slate-700',
+  tired: 'bg-amber-50 text-amber-700',
+  tense: 'bg-rose-50 text-rose-700',
+  energetic: 'bg-emerald-50 text-emerald-700'
+};
+
+const faceColorMap: Record<string, string> = {
+  relaxed: 'bg-emerald-50 text-emerald-700',
+  tense: 'bg-rose-50 text-rose-700',
+  sad: 'bg-violet-50 text-violet-700',
+  blank: 'bg-slate-100 text-slate-700',
+  worried: 'bg-amber-50 text-amber-700',
+  engaged: 'bg-emerald-50 text-emerald-700'
+};
+
 const QUICK_REPLIES = [
-  "I'm fine, just tired",
-  "Physics is really stressing me out",
-  "Mock tests didn't go well again",
-  "I don't know if I can do this",
-  "I studied all day but feel worse"
+  { text: "I'm fine, just tired", icon: '😐' },
+  { text: "Physics is really stressing me out", icon: '⚛️' },
+  { text: "Mock tests didn't go well again", icon: '📝' },
+  { text: "I don't know if I can do this", icon: '😔' },
+  { text: "I studied all day but feel worse", icon: '📚' },
 ];
 
 export default function MindMirrorPage() {
   // ===== STATE =====
   const [messages, setMessages] = useState<Message[]>([
-    { id: 'welcome', role: 'ai', text: "Hi! I'm MindMirror — your personal wellness companion. I'm here to listen without judgment.\n\nHow are you feeling about your exam preparation today?", time: 'Just now' }
+    {
+      id: 'welcome',
+      role: 'ai',
+      text: "Hi! I'm **MindMirror** — your personal wellness companion. I'm here to listen without judgment, and sometimes I might notice things in your words that even you haven't fully realized yet.\n\nHow are you feeling about your exam preparation today?",
+      time: 'Just now'
+    }
   ]);
   const [inputText, setInputText] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -74,10 +100,11 @@ export default function MindMirrorPage() {
   const [faceSignal, setFaceSignal] = useState('relaxed');
   const [triggers, setTriggers] = useState<Record<string, number>>({});
   const [burnout, setBurnout] = useState(0);
-  const [moodHistory, setMoodHistory] = useState<number[]>([]);
+  const [moodHistory, setMoodHistory] = useState<{ label: string; score: number }[]>([]);
   const [insight, setInsight] = useState('');
   const [showInsight, setShowInsight] = useState(false);
   const [contradiction, setContradiction] = useState<{ detected: boolean; type: string; question: string } | null>(null);
+  const [exchangeCount, setExchangeCount] = useState(0);
 
   // Journal state
   const [journalEntries, setJournalEntries] = useState<JournalEntry[]>([]);
@@ -85,7 +112,7 @@ export default function MindMirrorPage() {
   // Settings state
   const [settings, setSettings] = useState({ camera: true, voice: true, journal: true, crisis: true });
 
-  // Conversation history for API
+  // Refs
   const conversationHistory = useRef<{ role: string; content: string }[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -118,27 +145,26 @@ export default function MindMirrorPage() {
     }
   }, [inputText]);
 
-  // ===== GET TIME =====
+  // ===== HELPERS =====
   const getTime = () => new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
 
-  // ===== EXTRACT TAGS =====
   const extractTags = (text: string): string[] => {
-    const subjects = ['Physics', 'Chemistry', 'Math', 'Maths', 'Biology', 'English', 'History', 'Geography', 'Economics'];
+    const subjects = ['Physics', 'Chemistry', 'Math', 'Maths', 'Biology', 'English', 'History', 'Geography', 'Economics', 'UPSC', 'JEE', 'NEET', 'CAT', 'GATE'];
     const tags: string[] = [];
     subjects.forEach(s => { if (text.toLowerCase().includes(s.toLowerCase())) tags.push(s); });
     if (/stress|stressed|pressure/i.test(text)) tags.push('stress');
     if (/tired|exhaust|burnout/i.test(text)) tags.push('burnout');
     if (/can't|cannot|give up/i.test(text)) tags.push('self-doubt');
+    if (/anxious|worry|nervous/i.test(text)) tags.push('anxiety');
     return tags.slice(0, 4);
   };
 
   // ===== SAVE TO JOURNAL =====
-  const saveToJournal = useCallback(() => {
-    if (!settings.journal) return;
+  const saveToJournal = useCallback((currentMessages: Message[]) => {
     try {
-      const summary = conversationHistory.current
+      const summary = currentMessages
         .filter(m => m.role === 'user')
-        .map(m => m.content)
+        .map(m => m.text)
         .join(' ');
       if (!summary.trim()) return;
 
@@ -147,12 +173,20 @@ export default function MindMirrorPage() {
         date: new Date().toLocaleString('en-IN'),
         summary: summary.slice(0, 300),
         tags: extractTags(summary),
+        mood: textSentiment,
       };
       const entries = [entry, ...journalEntries].slice(0, 50);
       setJournalEntries(entries);
       localStorage.setItem('mindmirror_journal', JSON.stringify(entries));
     } catch { /* ignore */ }
-  }, [settings.journal, journalEntries]);
+  }, [textSentiment, journalEntries]);
+
+  // ===== FORMAT TEXT WITH MARKDOWN-LIKE BOLD =====
+  const formatText = (text: string) => {
+    return text
+      .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+      .replace(/\n/g, '<br>');
+  };
 
   // ===== SEND MESSAGE =====
   const sendMessage = async (overrideText?: string) => {
@@ -162,16 +196,63 @@ export default function MindMirrorPage() {
     setIsLoading(true);
     setInputText('');
 
-    // Add user message
+    // Reset textarea height
+    if (textareaRef.current) {
+      textareaRef.current.style.height = 'auto';
+    }
+
+    // ===== CLIENT-SIDE CRISIS DETECTION =====
+    const CRISIS_KEYWORDS = ['give up on everything', 'end it all', 'no point living', 'suicide', 'kill myself', 'don\'t want to live', 'want to die', 'end my life', 'can\'t go on', 'better off dead'];
+    const isClientCrisis = CRISIS_KEYWORDS.some(kw => text.toLowerCase().includes(kw));
+
+    // ===== CLIENT-SIDE TRIGGER DETECTION =====
+    const subjectKeywords: Record<string, string[]> = {
+      'Physics': ['physics', 'mechanics', 'thermodynamics', 'electro'],
+      'Chemistry': ['chemistry', 'organic', 'inorganic', 'reactions'],
+      'Math': ['math', 'maths', 'calculus', 'algebra', 'trigonometry'],
+      'Biology': ['biology', 'botany', 'zoology'],
+      'Parents': ['parents', 'mom', 'dad', 'family pressure', 'family expects'],
+      'Sleep': ['sleep', 'insomnia', 'can\'t sleep', 'tired', 'exhausted'],
+      'Time': ['time', 'running out of time', 'deadline', 'not enough time'],
+      'Mock Tests': ['mock test', 'mock exam', 'practice test', 'test score'],
+    };
+    const clientTriggers: Record<string, number> = {};
+    for (const [subject, keywords] of Object.entries(subjectKeywords)) {
+      if (keywords.some(kw => text.toLowerCase().includes(kw))) {
+        clientTriggers[subject] = 65;
+      }
+    }
+
+    // ===== CLIENT-SIDE SENTIMENT HINT =====
+    const negativeWords = ['stressed', 'anxious', 'worried', 'scared', 'overwhelmed', 'can\'t', 'hate', 'terrible', 'awful', 'impossible', 'hopeless', 'give up', 'burnout', 'exhausted'];
+    const isNegativeText = negativeWords.some(w => text.toLowerCase().includes(w));
+
     const userMsg: Message = { id: `u-${Date.now()}`, role: 'user', text, time: getTime() };
-    setMessages(prev => [...prev, userMsg]);
+    const newMessages = [...messages, userMsg];
+    setMessages(newMessages);
 
     // Add thinking indicator
-    const thinkingMsg: Message = { id: 'thinking', role: 'ai', text: 'Thinking…', time: '' };
-    setMessages(prev => [...prev, thinkingMsg]);
+    const thinkingMsg: Message = { id: 'thinking', role: 'ai', text: '', time: '' };
+    setMessages([...newMessages, thinkingMsg]);
 
-    // Add to conversation history
     conversationHistory.current.push({ role: 'user', content: text });
+
+    // Immediately apply client-side triggers to panel
+    if (Object.keys(clientTriggers).length > 0) {
+      setTriggers(prev => {
+        const merged = { ...prev };
+        for (const [key, val] of Object.entries(clientTriggers)) {
+          merged[key] = Math.max(merged[key] || 0, val);
+        }
+        const sorted = Object.entries(merged).sort(([, a], [, b]) => b - a).slice(0, 8);
+        return Object.fromEntries(sorted);
+      });
+    }
+
+    // Immediately increment burnout slightly for negative messages
+    if (isNegativeText) {
+      setBurnout(prev => Math.min(100, prev + 8));
+    }
 
     try {
       const response = await fetch('/api/chat', {
@@ -189,61 +270,112 @@ export default function MindMirrorPage() {
       const data = await response.json();
       const { reply, meta } = data;
 
-      // Add AI message (replace thinking)
-      const aiMsg: Message = { id: `a-${Date.now()}`, role: 'ai', text: reply || "I'm here. Could you tell me more?", time: getTime() };
-      setMessages(prev => prev.filter(m => m.id !== 'thinking').concat(aiMsg));
+      const aiMsg: Message = {
+        id: `a-${Date.now()}`,
+        role: 'ai',
+        text: reply || "I'm here. Could you tell me more?",
+        time: getTime(),
+        meta
+      };
+      const messagesAfterAI = [...newMessages, aiMsg];
 
-      // Add crisis message if flagged
-      if (meta?.crisisFlag && settings.crisis) {
+      // Add crisis message if flagged by LLM OR client-side detection
+      if ((meta?.crisisFlag || isClientCrisis) && settings.crisis) {
         const crisisMsg: Message = {
           id: `c-${Date.now()}`,
           role: 'ai',
-          text: "I want to make sure you're okay. If things feel really heavy right now, please reach out to a counselor:\n\n📞 iCall: 9152987821\n📞 Vandrevala Foundation: 1860-2662-345\n\nThey're trained to listen, and you deserve support beyond what I can offer.",
+          text: "I want to make sure you're okay. If things feel really heavy right now, please reach out:\n\n📞 **iCall**: 9152987821\n📞 **Vandrevala Foundation**: 1860-2662-345\n\nThey're trained to listen, and you deserve support beyond what I can offer.",
           time: getTime(),
           isCrisis: true
         };
-        setMessages(prev => [...prev, crisisMsg]);
+        messagesAfterAI.push(crisisMsg);
       }
 
-      // Update conversation history
+      setMessages(messagesAfterAI);
       conversationHistory.current.push({ role: 'assistant', content: reply });
 
-      // Debug: log meta to verify data
-      console.log('[MindMirror] AI meta:', JSON.stringify(meta));
+      // Update exchange count
+      setExchangeCount(prev => prev + 1);
 
-      // Update insight panel
+      // Update insight panel with LLM meta + client-side enhancements
       if (meta) {
         if (meta.textSentiment) setTextSentiment(meta.textSentiment);
         if (meta.voiceTone) setVoiceTone(meta.voiceTone);
         if (meta.faceSignal) setFaceSignal(meta.faceSignal);
-        if (meta.triggers && Object.keys(meta.triggers).length > 0) setTriggers(meta.triggers);
-        if (typeof meta.burnout === 'number') setBurnout(meta.burnout);
+        
+        // Merge triggers from LLM with client-side triggers
+        if (meta.triggers && Object.keys(meta.triggers).length > 0) {
+          setTriggers(prev => {
+            const merged = { ...prev, ...meta.triggers };
+            const sorted = Object.entries(merged).sort(([, a], [, b]) => b - a).slice(0, 8);
+            return Object.fromEntries(sorted);
+          });
+        }
+        
+        // Use LLM burnout if higher than current, or increment client-side
+        if (typeof meta.burnout === 'number') {
+          setBurnout(prev => Math.max(prev, meta.burnout));
+        }
+        
+        // Add mood score to history
         if (meta.textSentiment) {
           const score = moodScoreMap[meta.textSentiment] ?? 50;
-          console.log('[MindMirror] Mood update:', meta.textSentiment, '→ score:', score);
           setMoodHistory(prev => {
-            const next = [...prev, score].slice(-8);
-            console.log('[MindMirror] moodHistory:', next);
+            const next = [...prev, { label: `#${prev.length + 1}`, score }].slice(-10);
             return next;
           });
         }
+        
+        // Show insight from LLM or generate client-side insight
         if (meta.insight) {
           setInsight(meta.insight);
           setShowInsight(true);
+        } else if (exchangeCount >= 2) {
+          // Client-side insight generation as fallback
+          const triggerNames = Object.keys(triggers);
+          if (triggerNames.length > 0) {
+            const topTrigger = triggerNames[0];
+            const negWords = ['stressed', 'anxious', 'worried', 'overwhelmed', 'can\'t'];
+            const hasNeg = conversationHistory.current
+              .filter(m => m.role === 'user')
+              .some(m => negWords.some(w => m.content.toLowerCase().includes(w)));
+            if (hasNeg) {
+              setInsight(`${topTrigger} appears frequently alongside your stressful thoughts — this might be a knowledge-gap anxiety pattern, not a capability issue.`);
+              setShowInsight(true);
+            }
+          }
         }
+        
         if (meta.contradictionDetected) {
           setContradiction({
             detected: true,
             type: meta.contradictionType || 'verbal-vs-facial',
             question: meta.adaptiveQuestion || ''
           });
+        } else if (isNegativeText && text.toLowerCase().includes('fine')) {
+          // Client-side contradiction: "fine" + negative context
+          setContradiction({
+            detected: true,
+            type: 'verbal-vs-behavioral',
+            question: 'You say you\'re fine, but your words suggest otherwise. What\'s really going on?'
+          });
         } else {
           setContradiction(null);
+        }
+      } else {
+        // No meta from LLM — still apply client-side updates
+        if (isNegativeText) {
+          setMoodHistory(prev => {
+            const next = [...prev, { label: `#${prev.length + 1}`, score: 30 }].slice(-10);
+            return next;
+          });
         }
       }
 
       // Save to journal
-      saveToJournal();
+      if (settings.journal) {
+        saveToJournal(messagesAfterAI);
+      }
     } catch (err) {
       setMessages(prev => prev.filter(m => m.id !== 'thinking').concat({
         id: `e-${Date.now()}`, role: 'ai', text: "I had trouble connecting. Please try again.", time: getTime()
@@ -257,7 +389,7 @@ export default function MindMirrorPage() {
   // ===== CLEAR SESSION =====
   const clearSession = () => {
     if (!confirm('Start a new session? Current conversation will be saved to the journal.')) return;
-    saveToJournal();
+    if (settings.journal) saveToJournal(messages);
     conversationHistory.current = [];
     setMessages([
       { id: 'new-welcome', role: 'ai', text: "Hi again! Ready for a new session. How are you feeling right now?", time: 'Just now' }
@@ -271,6 +403,7 @@ export default function MindMirrorPage() {
     setTextSentiment('neutral');
     setVoiceTone('calm');
     setFaceSignal('relaxed');
+    setExchangeCount(0);
   };
 
   // ===== EXPORT / DELETE DATA =====
@@ -290,285 +423,628 @@ export default function MindMirrorPage() {
     setJournalEntries([]);
   };
 
-  // ===== RENDER =====
+  // ===== DERIVED STATE =====
   const sortedTriggers = Object.entries(triggers).sort(([, a], [, b]) => b - a).slice(0, 6);
   const burnoutLabel = burnout >= 70 ? 'High' : burnout >= 40 ? 'Moderate' : burnout > 0 ? 'Low' : '—';
-  const burnoutColor = burnout >= 70 ? '#A32D2D' : burnout >= 40 ? '#854F0B' : '#0F6E56';
+  const burnoutColor = burnout >= 70 ? 'text-rose-600' : burnout >= 40 ? 'text-amber-600' : 'text-emerald-600';
+  const burnoutBarColor = burnout >= 70 ? 'bg-rose-500' : burnout >= 40 ? 'bg-amber-500' : 'bg-emerald-500';
   const burnoutDesc = burnout >= 70 ? 'Consider taking a real break today.' : burnout >= 40 ? "You're pushing hard. Rest matters." : burnout > 0 ? "You're managing well right now." : 'No data yet';
 
-  return (
-    <>
-      <a href="#main-content" className="skip-link">Skip to main content</a>
-      <div aria-live="polite" aria-atomic="true" className="sr-only" id="sr-announce" />
+  // ===== SVG CHART FOR MOOD TIMELINE =====
+  const renderMoodChart = () => {
+    if (moodHistory.length === 0) {
+      return (
+        <div className="text-xs text-slate-400 text-center py-4">
+          Start talking — mood trend will appear
+        </div>
+      );
+    }
 
-      {/* HEADER */}
-      <header className="mm-header" role="banner">
-        <a href="#" className="mm-logo" aria-label="MindMirror home">
-          <div className="mm-logo-icon" aria-hidden="true">
-            <svg viewBox="0 0 24 24"><path d="M12 2a7 7 0 0 1 7 7c0 3-1.5 5.5-4 6.8V18H9v-2.2C6.5 14.5 5 12 5 9a7 7 0 0 1 7-7z"/><path d="M9 21h6M10 18v3M14 18v3"/></svg>
+    const w = 280;
+    const h = 80;
+    const padX = 24;
+    const padY = 10;
+    const chartW = w - padX * 2;
+    const chartH = h - padY * 2;
+
+    // Handle single-point case (show just a dot)
+    if (moodHistory.length === 1) {
+      const m = moodHistory[0];
+      const px = padX + chartW / 2;
+      const py = padY + chartH - (m.score / 100) * chartH;
+      const moodLabel = Object.entries(moodScoreMap).find(([, v]) => v === m.score)?.[0] || '';
+
+      return (
+        <svg viewBox={`0 0 ${w} ${h}`} className="w-full" aria-label="Mood trend chart">
+          {[0, 25, 50, 75, 100].map(v => {
+            const y = padY + chartH - (v / 100) * chartH;
+            return <line key={v} x1={padX} y1={y} x2={w - padX} y2={y} stroke="#e2e8f0" strokeWidth="0.5" strokeDasharray="3 3" />;
+          })}
+          <circle cx={px} cy={py} r="5" fill="#7c3aed" stroke="#fff" strokeWidth="2" />
+          <text x={w / 2} y={h - 2} textAnchor="middle" className="text-[8px] fill-slate-400" fontFamily="Inter, sans-serif">{moodLabel}</text>
+        </svg>
+      );
+    }
+
+    const points = moodHistory.map((m, i) => ({
+      x: padX + (i / Math.max(moodHistory.length - 1, 1)) * chartW,
+      y: padY + chartH - (m.score / 100) * chartH,
+      score: m.score,
+      label: m.label
+    }));
+
+    const linePath = points.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x} ${p.y}`).join(' ');
+    const areaPath = `${linePath} L ${points[points.length - 1].x} ${padY + chartH} L ${points[0].x} ${padY + chartH} Z`;
+
+    return (
+      <svg viewBox={`0 0 ${w} ${h}`} className="w-full" aria-label="Mood trend chart">
+        {/* Grid lines */}
+        {[0, 25, 50, 75, 100].map(v => {
+          const y = padY + chartH - (v / 100) * chartH;
+          return <line key={v} x1={padX} y1={y} x2={w - padX} y2={y} stroke="#e2e8f0" strokeWidth="0.5" strokeDasharray="3 3" />;
+        })}
+        {/* Area fill */}
+        <path d={areaPath} fill="url(#moodGrad)" opacity="0.3" />
+        {/* Line */}
+        <path d={linePath} fill="none" stroke="#7c3aed" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+        {/* Dots */}
+        {points.map((p, i) => (
+          <g key={i}>
+            <circle cx={p.x} cy={p.y} r="3.5" fill="#7c3aed" stroke="#fff" strokeWidth="1.5" />
+            <text x={p.x} y={h - 2} textAnchor="middle" className="text-[7px] fill-slate-400" fontFamily="Inter, sans-serif">{p.label}</text>
+          </g>
+        ))}
+        <defs>
+          <linearGradient id="moodGrad" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="#7c3aed" />
+            <stop offset="100%" stopColor="#7c3aed" stopOpacity="0" />
+          </linearGradient>
+        </defs>
+      </svg>
+    );
+  };
+
+  // ===== RENDER =====
+  return (
+    <div className="flex flex-col h-screen bg-slate-50 overflow-hidden">
+      {/* Skip link */}
+      <a href="#main-content" className="sr-only focus:not-sr-only focus:fixed focus:top-0 focus:left-0 focus:z-[9999] focus:bg-violet-600 focus:text-white focus:px-4 focus:py-2 focus:text-sm">
+        Skip to main content
+      </a>
+
+      {/* ===== HEADER ===== */}
+      <header className="bg-white/80 backdrop-blur-xl border-b border-slate-200 px-4 md:px-6 h-14 flex items-center justify-between sticky top-0 z-50 shrink-0">
+        <div className="flex items-center gap-3">
+          <div className="w-8 h-8 bg-gradient-to-br from-violet-500 to-purple-700 rounded-lg flex items-center justify-center shadow-lg shadow-violet-200">
+            <svg viewBox="0 0 24 24" className="w-4 h-4" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M12 2a7 7 0 0 1 7 7c0 3-1.5 5.5-4 6.8V18H9v-2.2C6.5 14.5 5 12 5 9a7 7 0 0 1 7-7z"/>
+              <path d="M9 21h6M10 18v3M14 18v3"/>
+            </svg>
           </div>
-          <span className="mm-logo-text">MindMirror<span className="mm-logo-tag"> beta</span></span>
-        </a>
-        <nav className="mm-nav" role="navigation" aria-label="App sections">
-          <button className={`mm-nav-btn ${activeView === 'chat' ? 'active' : ''}`} onClick={() => setActiveView('chat')} aria-pressed={activeView === 'chat'}>Session</button>
-          <button className={`mm-nav-btn ${activeView === 'journal' ? 'active' : ''}`} onClick={() => setActiveView('journal')} aria-pressed={activeView === 'journal'}>Journal</button>
-          <button className={`mm-nav-btn ${activeView === 'privacy' ? 'active' : ''}`} onClick={() => setActiveView('privacy')} aria-pressed={activeView === 'privacy'}>Privacy</button>
-          <button className="mm-nav-btn" onClick={() => setShowMobilePanel(!showMobilePanel)} aria-label="Toggle insights panel" style={{ display: 'none' }}>📊</button>
+          <div>
+            <span className="font-semibold text-slate-900 text-sm">MindMirror</span>
+            <span className="text-[10px] text-slate-400 ml-1 font-normal">beta</span>
+          </div>
+        </div>
+        <nav className="flex items-center gap-1" role="navigation" aria-label="App sections">
+          <button
+            className={`px-3 py-1.5 text-xs font-medium rounded-full transition-all duration-200 ${activeView === 'chat' ? 'bg-violet-600 text-white shadow-md shadow-violet-200' : 'text-slate-600 hover:bg-slate-100'}`}
+            onClick={() => setActiveView('chat')}
+            aria-pressed={activeView === 'chat'}
+          >
+            Session
+          </button>
+          <button
+            className={`px-3 py-1.5 text-xs font-medium rounded-full transition-all duration-200 ${activeView === 'journal' ? 'bg-violet-600 text-white shadow-md shadow-violet-200' : 'text-slate-600 hover:bg-slate-100'}`}
+            onClick={() => setActiveView('journal')}
+            aria-pressed={activeView === 'journal'}
+          >
+            Journal
+          </button>
+          <button
+            className={`px-3 py-1.5 text-xs font-medium rounded-full transition-all duration-200 ${activeView === 'privacy' ? 'bg-violet-600 text-white shadow-md shadow-violet-200' : 'text-slate-600 hover:bg-slate-100'}`}
+            onClick={() => setActiveView('privacy')}
+            aria-pressed={activeView === 'privacy'}
+          >
+            Privacy
+          </button>
+          <button
+            className="md:hidden ml-1 px-2 py-1.5 text-xs font-medium rounded-full text-slate-600 hover:bg-slate-100 transition-all"
+            onClick={() => setShowMobilePanel(!showMobilePanel)}
+            aria-label="Toggle insights panel"
+          >
+            📊
+          </button>
         </nav>
       </header>
 
-      {/* MAIN */}
-      <main className="mm-main" id="main-content" role="main">
+      {/* ===== MAIN ===== */}
+      <main id="main-content" className="flex-1 flex overflow-hidden" role="main">
 
         {/* ===== CHAT VIEW ===== */}
-        <section id="view-chat" className={`view ${activeView === 'chat' ? 'active' : ''}`} aria-label="Conversation session">
-          <div className="chat-topbar">
-            <div className="session-info">
-              <div className="avatar" aria-hidden="true">🧘</div>
-              <div>
-                <div className="session-name">MindMirror</div>
-                <div className="session-sub"><span className="status-dot" aria-hidden="true" />Listening actively</div>
+        <section
+          id="view-chat"
+          className={`flex-1 flex flex-col min-w-0 ${activeView === 'chat' ? '' : 'hidden md:flex'}`}
+          aria-label="Conversation session"
+        >
+          {/* Chat top bar */}
+          <div className="px-4 md:px-5 py-3 border-b border-slate-100 flex items-center justify-between bg-white shrink-0">
+            <div className="flex items-center gap-3">
+              <div className="w-9 h-9 rounded-full bg-gradient-to-br from-violet-100 to-purple-100 border-2 border-violet-200 flex items-center justify-center text-base">
+                🧘
               </div>
-            </div>
-            <button className="mm-nav-btn" onClick={clearSession} aria-label="Start new session">New session</button>
-          </div>
-
-          <div className="messages" role="log" aria-label="Conversation messages" aria-live="polite" tabIndex={0}>
-            {messages.map(msg => (
-              <div key={msg.id} className={`msg-wrap ${msg.role === 'user' ? 'user' : 'ai'}`}>
-                <div className={`msg-avatar ${msg.role}`} aria-hidden="true">{msg.role === 'ai' ? '🧠' : '🎓'}</div>
-                <div>
-                  <div className={`msg-bubble ${msg.role} ${msg.isCrisis ? 'crisis' : ''} ${msg.id === 'thinking' ? 'thinking' : ''}`}
-                    role={msg.isCrisis ? 'alert' : 'article'}
-                    aria-label={msg.role === 'ai' ? 'MindMirror says' : 'You said'}
-                    dangerouslySetInnerHTML={{ __html: msg.text.replace(/\n/g, '<br>') }}
-                  />
-                  {msg.time && <div className="msg-time">{msg.time}</div>}
+              <div>
+                <div className="text-sm font-medium text-slate-900">MindMirror</div>
+                <div className="flex items-center gap-1.5 text-xs text-slate-400">
+                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" aria-hidden="true" />
+                  Listening actively
                 </div>
               </div>
+            </div>
+            <div className="flex items-center gap-2">
+              {exchangeCount > 0 && (
+                <span className="text-[10px] text-slate-400 bg-slate-50 px-2 py-1 rounded-full">
+                  {exchangeCount} exchange{exchangeCount !== 1 ? 's' : ''}
+                </span>
+              )}
+              <button
+                className="px-3 py-1.5 text-xs font-medium rounded-full text-slate-600 hover:bg-slate-100 border border-slate-200 transition-all"
+                onClick={clearSession}
+                aria-label="Start new session"
+              >
+                New session
+              </button>
+            </div>
+          </div>
+
+          {/* Messages */}
+          <div className="flex-1 overflow-y-auto px-4 md:px-6 py-4 space-y-4" role="log" aria-label="Conversation messages" aria-live="polite" tabIndex={0}>
+            {messages.map(msg => (
+              <motion.div
+                key={msg.id}
+                initial={{ opacity: 0, y: 12 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.25, ease: 'easeOut' }}
+                className={`flex items-end gap-2.5 ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
+              >
+                {msg.role === 'ai' && (
+                  <div className="w-7 h-7 rounded-full bg-gradient-to-br from-violet-100 to-purple-100 border border-violet-200 flex items-center justify-center text-xs shrink-0">
+                    🧠
+                  </div>
+                )}
+                <div className={`max-w-[80%] md:max-w-[70%]`}>
+                  <div
+                    className={`px-4 py-2.5 text-sm leading-relaxed rounded-2xl ${
+                      msg.id === 'thinking'
+                        ? 'bg-slate-100 text-slate-400 italic rounded-bl-md'
+                        : msg.role === 'ai'
+                          ? msg.isCrisis
+                            ? 'bg-rose-50 border-l-[3px] border-rose-400 text-rose-900 rounded-bl-md'
+                            : 'bg-slate-100 text-slate-800 rounded-bl-md'
+                          : 'bg-violet-600 text-white rounded-br-md'
+                    }`}
+                    role={msg.isCrisis ? 'alert' : undefined}
+                    aria-label={msg.role === 'ai' ? 'MindMirror says' : 'You said'}
+                  >
+                    {msg.id === 'thinking' ? (
+                      <div className="flex items-center gap-2">
+                        <div className="flex gap-1">
+                          <span className="w-1.5 h-1.5 bg-violet-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                          <span className="w-1.5 h-1.5 bg-violet-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+                          <span className="w-1.5 h-1.5 bg-violet-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                        </div>
+                        <span>MindMirror is reflecting…</span>
+                      </div>
+                    ) : (
+                      <span dangerouslySetInnerHTML={{ __html: formatText(msg.text) }} />
+                    )}
+                  </div>
+                  {msg.time && (
+                    <div className={`text-[10px] text-slate-400 mt-1 ${msg.role === 'user' ? 'text-right' : 'text-left'}`}>
+                      {msg.time}
+                    </div>
+                  )}
+                </div>
+                {msg.role === 'user' && (
+                  <div className="w-7 h-7 rounded-full bg-slate-100 border border-slate-200 flex items-center justify-center text-xs shrink-0">
+                    🎓
+                  </div>
+                )}
+              </motion.div>
             ))}
             <div ref={messagesEndRef} />
           </div>
 
-          <div className="quick-replies" role="group" aria-label="Suggested replies">
-            <span className="qr-label">Quick replies</span>
-            {QUICK_REPLIES.map(qr => (
-              <button key={qr} className="qr-btn" onClick={() => sendMessage(qr)}>{qr}</button>
-            ))}
+          {/* Quick replies */}
+          <div className="px-4 md:px-5 py-2 border-t border-slate-100 bg-white shrink-0">
+            <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-hide">
+              <span className="text-[10px] text-slate-400 font-medium uppercase tracking-wider shrink-0">Quick</span>
+              {QUICK_REPLIES.map(qr => (
+                <button
+                  key={qr.text}
+                  className="shrink-0 px-3 py-1.5 text-xs bg-white border border-slate-200 rounded-full text-slate-600 hover:border-violet-300 hover:text-violet-700 hover:bg-violet-50 transition-all duration-150 whitespace-nowrap"
+                  onClick={() => sendMessage(qr.text)}
+                  disabled={isLoading}
+                >
+                  {qr.icon} {qr.text}
+                </button>
+              ))}
+            </div>
           </div>
 
-          <div className="input-row">
-            <textarea
-              ref={textareaRef}
-              className="chat-input"
-              placeholder="Share what's on your mind…"
-              rows={1}
-              aria-label="Message input"
-              value={inputText}
-              onChange={e => setInputText(e.target.value)}
-              onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } }}
-              disabled={isLoading}
-            />
-            <button className="send-btn" onClick={() => sendMessage()} disabled={!inputText.trim() || isLoading} aria-label="Send message">
-              <svg viewBox="0 0 24 24"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
-            </button>
+          {/* Input area */}
+          <div className="px-4 md:px-5 py-3 border-t border-slate-200 bg-white shrink-0">
+            <div className="flex items-end gap-2">
+              <textarea
+                ref={textareaRef}
+                className="flex-1 resize-none border border-slate-200 rounded-xl px-4 py-2.5 text-sm leading-relaxed min-h-[44px] max-h-[120px] outline-none transition-all duration-150 text-slate-900 bg-slate-50 focus:border-violet-500 focus:bg-white focus:ring-2 focus:ring-violet-100 placeholder:text-slate-400"
+                placeholder="Share what's on your mind…"
+                rows={1}
+                aria-label="Message input"
+                value={inputText}
+                onChange={e => setInputText(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } }}
+                disabled={isLoading}
+              />
+              <button
+                className="w-11 h-11 bg-violet-600 hover:bg-violet-700 active:scale-95 rounded-xl flex items-center justify-center transition-all duration-150 shrink-0 shadow-lg shadow-violet-200 disabled:bg-slate-200 disabled:shadow-none disabled:cursor-not-allowed"
+                onClick={() => sendMessage()}
+                disabled={!inputText.trim() || isLoading}
+                aria-label="Send message"
+              >
+                <svg viewBox="0 0 24 24" className="w-4 h-4" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <line x1="22" y1="2" x2="11" y2="13"/>
+                  <polygon points="22 2 15 22 11 13 2 9 22 2"/>
+                </svg>
+              </button>
+            </div>
           </div>
         </section>
 
         {/* ===== INSIGHTS PANEL ===== */}
-        <aside id="panel-insights" className={showMobilePanel ? 'mobile-open' : ''} role="complementary" aria-label="Real-time emotional insights" style={{ display: activeView === 'chat' ? '' : 'none' }}>
-
-          {/* Signal Analysis */}
-          <div className="panel-section">
-            <div className="panel-title">Signal analysis</div>
-            <div className="signals">
-              <div className="signal-item">
-                <div className="signal-icon text" aria-hidden="true">
-                  <svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-                </div>
-                <div><div className="signal-label">Text tone</div><span className={`signal-badge ${sentimentBadge[textSentiment] || 'badge-neutral'}`}>{textSentiment.charAt(0).toUpperCase() + textSentiment.slice(1)}</span></div>
-              </div>
-              <div className="signal-item">
-                <div className="signal-icon voice" aria-hidden="true">
-                  <svg viewBox="0 0 24 24"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2M12 19v4M8 23h8"/></svg>
-                </div>
-                <div><div className="signal-label">Voice energy</div><span className={`signal-badge ${toneBadge[voiceTone] || 'badge-neutral'}`}>{voiceTone.charAt(0).toUpperCase() + voiceTone.slice(1)}</span></div>
-              </div>
-              <div className="signal-item">
-                <div className="signal-icon face" aria-hidden="true">
-                  <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2M9 9h.01M15 9h.01"/></svg>
-                </div>
-                <div><div className="signal-label">Facial signal</div><span className={`signal-badge ${faceBadge[faceSignal] || 'badge-neutral'}`}>{faceSignal.charAt(0).toUpperCase() + faceSignal.slice(1)}</span></div>
-              </div>
-            </div>
-          </div>
-
-          {/* Contradiction Alert */}
-          {contradiction?.detected && (
-            <div className="panel-section">
-              <div className="panel-title">Contradiction detected</div>
-              <div className="contradiction-alert">
-                <div className="contradiction-header">
-                  <span style={{ fontSize: 14 }}>⚡</span>
-                  <span className="contradiction-title">{contradiction.type.replace(/-/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}</span>
-                </div>
-                <div className="contradiction-text">
-                  Your words and signals don&apos;t match. MindMirror is adapting its questions to probe deeper.
-                  {contradiction.question && <><br /><strong>Adaptive question: </strong>&ldquo;{contradiction.question}&rdquo;</>}
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Stress Triggers */}
-          <div className="panel-section">
-            <div className="panel-title">Stress triggers detected</div>
-            {sortedTriggers.length === 0 ? (
-              <div className="empty-state">Start talking — patterns will appear here</div>
-            ) : (
-              <div className="trigger-list">
-                {sortedTriggers.map(([name, val]) => (
-                  <div key={name} className="trigger-row">
-                    <span className="trigger-name" title={name}>{name}</span>
-                    <div className="trigger-track">
-                      <div className={`trigger-fill ${val >= 70 ? 'fill-high' : val >= 40 ? 'fill-mid' : 'fill-low'}`}
-                        style={{ width: `${val}%` }} role="img" aria-label={`${name} stress level ${val}%`} />
-                    </div>
-                    <span className="trigger-pct">{val}%</span>
+        <AnimatePresence>
+          {(activeView === 'chat' || (activeView !== 'chat' && typeof window !== 'undefined' && window.innerWidth >= 768)) && (
+            <aside
+              id="panel-insights"
+              className={`w-[340px] border-l border-slate-200 bg-slate-50/80 overflow-y-auto shrink-0 hidden md:flex flex-col ${showMobilePanel ? '!flex fixed inset-[56px_0_0_0] z-[200] w-full' : ''}`}
+              role="complementary"
+              aria-label="Real-time emotional insights"
+            >
+              {/* Panel header */}
+              <div className="px-4 py-3 border-b border-slate-200 bg-white/50 backdrop-blur-sm sticky top-0 z-10">
+                <div className="flex items-center justify-between">
+                  <h2 className="text-xs font-semibold uppercase tracking-wider text-slate-400">Live Insights</h2>
+                  <div className="flex items-center gap-1">
+                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                    <span className="text-[10px] text-emerald-600 font-medium">Active</span>
                   </div>
-                ))}
-              </div>
-            )}
-          </div>
-
-          {/* Burnout Risk */}
-          <div className="panel-section">
-            <div className="panel-title">Burnout risk</div>
-            <div className="burnout-wrap">
-              <div className="burnout-track" role="progressbar" aria-label="Burnout risk level" aria-valuenow={burnout} aria-valuemin={0} aria-valuemax={100}>
-                <div className="burnout-fill" style={{ width: `${burnout}%` }} />
-              </div>
-              <div className="burnout-meta">
-                <span className="burnout-label" style={{ color: burnoutColor }}>{burnoutLabel}</span>
-                <span className="burnout-pct">{burnout > 0 ? `${burnout}%` : '—'}</span>
-              </div>
-              <div className="burnout-desc">{burnoutDesc}</div>
-            </div>
-          </div>
-
-          {/* Mood Timeline */}
-          <div className="panel-section">
-            <div className="panel-title">Mood over session</div>
-            <div className="mood-timeline" aria-label="Mood trend visualization">
-              {Array.from({ length: 8 }).map((_, i) => {
-                const val = moodHistory[i];
-                if (val == null) return <div key={i} className="mood-bar-empty" aria-hidden="true" />;
-                const h = Math.round(6 + (val / 100) * 42);
-                const cls = val >= 65 ? 'high' : val >= 40 ? 'mid' : 'low';
-                return <div key={i} className={`mood-bar ${cls}`} style={{ height: `${h}px` }} aria-label={`Mood ${val}%`} />;
-              })}
-            </div>
-          </div>
-
-          {/* Personalized Insight */}
-          <div className="panel-section" aria-live="polite">
-            <div className="panel-title">Personalized insight</div>
-            {showInsight && insight ? (
-              <div className="insight-card">
-                <div className="insight-card-header" aria-hidden="true">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#534AB7" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-                  <span className="insight-card-title">Pattern found</span>
                 </div>
-                <p className="insight-text">{insight}</p>
               </div>
-            ) : (
-              <div className="empty-state">Insight appears after a few exchanges</div>
-            )}
-          </div>
-        </aside>
+
+              {/* Signal Analysis */}
+              <div className="px-4 py-3 border-b border-slate-100">
+                <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 mb-3">Signal Analysis</div>
+                <div className="space-y-2.5">
+                  {/* Text sentiment */}
+                  <div className="flex items-center gap-3">
+                    <div className="w-8 h-8 rounded-lg bg-violet-50 flex items-center justify-center shrink-0">
+                      <svg viewBox="0 0 24 24" className="w-4 h-4 text-violet-500" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+                      </svg>
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-[11px] text-slate-400">Text tone</div>
+                    </div>
+                    <span className={`text-[11px] px-2.5 py-0.5 rounded-full font-medium ${sentimentColorMap[textSentiment] || 'bg-slate-100 text-slate-700'}`}>
+                      {moodEmojiMap[textSentiment] || '😐'} {textSentiment.charAt(0).toUpperCase() + textSentiment.slice(1)}
+                    </span>
+                  </div>
+
+                  {/* Voice tone */}
+                  <div className="flex items-center gap-3">
+                    <div className="w-8 h-8 rounded-lg bg-emerald-50 flex items-center justify-center shrink-0">
+                      <svg viewBox="0 0 24 24" className="w-4 h-4 text-emerald-500" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+                        <path d="M19 10v2a7 7 0 0 1-14 0v-2M12 19v4M8 23h8"/>
+                      </svg>
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-[11px] text-slate-400">Voice energy</div>
+                    </div>
+                    <span className={`text-[11px] px-2.5 py-0.5 rounded-full font-medium ${toneColorMap[voiceTone] || 'bg-slate-100 text-slate-700'}`}>
+                      {voiceTone === 'calm' ? '😌' : voiceTone === 'tense' ? '😰' : voiceTone === 'tired' ? '😴' : '🎙️'} {voiceTone.charAt(0).toUpperCase() + voiceTone.slice(1)}
+                    </span>
+                  </div>
+
+                  {/* Face signal */}
+                  <div className="flex items-center gap-3">
+                    <div className="w-8 h-8 rounded-lg bg-amber-50 flex items-center justify-center shrink-0">
+                      <svg viewBox="0 0 24 24" className="w-4 h-4 text-amber-500" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <circle cx="12" cy="12" r="10"/>
+                        <path d="M8 14s1.5 2 4 2 4-2 4-2M9 9h.01M15 9h.01"/>
+                      </svg>
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-[11px] text-slate-400">Facial signal</div>
+                    </div>
+                    <span className={`text-[11px] px-2.5 py-0.5 rounded-full font-medium ${faceColorMap[faceSignal] || 'bg-slate-100 text-slate-700'}`}>
+                      {faceSignal === 'relaxed' ? '😌' : faceSignal === 'tense' ? '😟' : faceSignal === 'worried' ? '😰' : '👁️'} {faceSignal.charAt(0).toUpperCase() + faceSignal.slice(1)}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Contradiction Alert */}
+              <AnimatePresence>
+                {contradiction?.detected && (
+                  <motion.div
+                    initial={{ opacity: 0, height: 0 }}
+                    animate={{ opacity: 1, height: 'auto' }}
+                    exit={{ opacity: 0, height: 0 }}
+                    className="px-4 py-3 border-b border-slate-100 bg-gradient-to-r from-amber-50 to-orange-50"
+                  >
+                    <div className="text-[10px] font-semibold uppercase tracking-wider text-amber-500 mb-2 flex items-center gap-1.5">
+                      <motion.span
+                        animate={{ scale: [1, 1.2, 1] }}
+                        transition={{ repeat: Infinity, duration: 1.5 }}
+                      >
+                        ⚡
+                      </motion.span>
+                      Contradiction Detected
+                    </div>
+                    <div className="bg-white/80 rounded-xl p-3 border border-amber-200">
+                      <div className="text-[11px] font-bold text-orange-700 uppercase tracking-wide mb-1.5">
+                        {contradiction.type.replace(/-/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
+                      </div>
+                      <div className="text-xs text-amber-900/80 leading-relaxed">
+                        Your words and signals don&apos;t match. MindMirror is adapting its questions to probe deeper.
+                        {contradiction.question && (
+                          <div className="mt-2 pt-2 border-t border-amber-200/50">
+                            <span className="font-semibold text-amber-800">Adaptive question: </span>
+                            &ldquo;{contradiction.question}&rdquo;
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+
+              {/* Stress Triggers */}
+              <div className="px-4 py-3 border-b border-slate-100">
+                <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 mb-3">Stress Triggers Detected</div>
+                {sortedTriggers.length === 0 ? (
+                  <div className="text-xs text-slate-400 text-center py-3">Start talking — patterns will appear here</div>
+                ) : (
+                  <div className="space-y-2.5">
+                    {sortedTriggers.map(([name, val]) => (
+                      <div key={name} className="flex items-center gap-2">
+                        <span className="text-xs text-slate-700 w-20 truncate shrink-0" title={name}>{name}</span>
+                        <div className="flex-1 h-2 bg-slate-200 rounded-full overflow-hidden">
+                          <motion.div
+                            className={`h-full rounded-full ${val >= 70 ? 'bg-rose-500' : val >= 40 ? 'bg-amber-500' : 'bg-emerald-500'}`}
+                            initial={{ width: 0 }}
+                            animate={{ width: `${val}%` }}
+                            transition={{ duration: 0.7, ease: [0.4, 0, 0.2, 1] }}
+                            role="img"
+                            aria-label={`${name} stress level ${val}%`}
+                          />
+                        </div>
+                        <span className="text-[11px] text-slate-400 w-8 text-right shrink-0">{val}%</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Burnout Risk */}
+              <div className="px-4 py-3 border-b border-slate-100">
+                <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 mb-3">Burnout Risk</div>
+                <div className="space-y-2">
+                  <div
+                    className="h-3 bg-slate-200 rounded-full overflow-hidden"
+                    role="progressbar"
+                    aria-label="Burnout risk level"
+                    aria-valuenow={burnout}
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                  >
+                    <motion.div
+                      className={`h-full rounded-full ${burnoutBarColor}`}
+                      initial={{ width: 0 }}
+                      animate={{ width: `${burnout}%` }}
+                      transition={{ duration: 0.8, ease: [0.4, 0, 0.2, 1] }}
+                    />
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className={`text-xs font-semibold ${burnoutColor}`}>{burnoutLabel}</span>
+                    <span className="text-xs text-slate-400">{burnout > 0 ? `${burnout}%` : '—'}</span>
+                  </div>
+                  <div className="text-[11px] text-slate-400">{burnoutDesc}</div>
+                </div>
+              </div>
+
+              {/* Mood Timeline */}
+              <div className="px-4 py-3 border-b border-slate-100">
+                <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 mb-3">Mood Over Session</div>
+                {renderMoodChart()}
+              </div>
+
+              {/* Personalized Insight */}
+              <div className="px-4 py-3" aria-live="polite">
+                <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 mb-3">Personalized Insight</div>
+                {showInsight && insight ? (
+                  <motion.div
+                    initial={{ opacity: 0, y: 8 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className="bg-violet-50 border border-violet-200 rounded-xl p-3"
+                  >
+                    <div className="flex items-center gap-1.5 mb-2">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#7c3aed" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                        <circle cx="12" cy="12" r="10"/>
+                        <line x1="12" y1="8" x2="12" y2="12"/>
+                        <line x1="12" y1="16" x2="12.01" y2="16"/>
+                      </svg>
+                      <span className="text-[11px] font-bold text-violet-700 uppercase tracking-wide">Pattern Found</span>
+                    </div>
+                    <p className="text-xs text-violet-900 leading-relaxed">{insight}</p>
+                  </motion.div>
+                ) : (
+                  <div className="text-xs text-slate-400 text-center py-3">Insight appears after a few exchanges</div>
+                )}
+              </div>
+            </aside>
+          )}
+        </AnimatePresence>
 
         {/* ===== JOURNAL VIEW ===== */}
-        <section id="view-journal" className={`view ${activeView === 'journal' ? 'active' : ''}`} aria-label="Journal entries">
-          <div className="journal-header">
-            <h1>Your journal</h1>
-            <p>Every conversation is saved here. Patterns are discovered across entries over time.</p>
-          </div>
-          <div className="journal-entries">
-            {journalEntries.length === 0 ? (
-              <div className="empty-state">No entries yet. Start a session to record your first journal entry.</div>
-            ) : journalEntries.map(e => (
-              <article key={e.id} className="journal-entry" tabIndex={0} aria-label={`Journal entry from ${e.date}`}>
-                <div className="entry-date">{e.date}</div>
-                <div className="entry-text">{e.summary}</div>
-                <div className="entry-tags">
-                  {e.tags.map(t => (
-                    <span key={t} className={`entry-tag ${t === 'stress' || t === 'self-doubt' ? 'stress' : t === 'burnout' ? 'burnout' : ''}`}>{t}</span>
-                  ))}
+        <section
+          id="view-journal"
+          className={`flex-1 overflow-y-auto p-6 md:p-10 ${activeView === 'journal' ? '' : 'hidden'}`}
+          aria-label="Journal entries"
+        >
+          <div className="max-w-2xl mx-auto">
+            <div className="mb-8">
+              <h1 className="text-2xl font-bold text-slate-900 mb-1">Your Journal</h1>
+              <p className="text-sm text-slate-400">Every conversation is saved here. Patterns are discovered across entries over time.</p>
+            </div>
+            <div className="space-y-4">
+              {journalEntries.length === 0 ? (
+                <div className="text-center py-12">
+                  <div className="text-4xl mb-3">📓</div>
+                  <div className="text-sm text-slate-400">No entries yet. Start a session to record your first journal entry.</div>
                 </div>
-              </article>
-            ))}
+              ) : journalEntries.map(e => (
+                <article
+                  key={e.id}
+                  className="bg-white border border-slate-200 rounded-xl p-5 hover:border-violet-200 hover:shadow-md transition-all cursor-pointer"
+                  tabIndex={0}
+                  aria-label={`Journal entry from ${e.date}`}
+                >
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="text-xs text-slate-400">{e.date}</div>
+                    {e.mood && (
+                      <span className={`text-[11px] px-2 py-0.5 rounded-full font-medium ${sentimentColorMap[e.mood] || 'bg-slate-100 text-slate-700'}`}>
+                        {moodEmojiMap[e.mood] || '😐'} {e.mood}
+                      </span>
+                    )}
+                  </div>
+                  <div className="text-sm text-slate-700 leading-relaxed line-clamp-3">{e.summary}</div>
+                  <div className="flex gap-1.5 mt-3 flex-wrap">
+                    {e.tags.map(t => (
+                      <span key={t} className={`text-[11px] px-2 py-0.5 rounded-full font-medium ${
+                        t === 'stress' || t === 'self-doubt' ? 'bg-rose-50 text-rose-700' :
+                        t === 'burnout' ? 'bg-amber-50 text-amber-700' :
+                        t === 'anxiety' ? 'bg-amber-50 text-amber-700' :
+                        'bg-violet-50 text-violet-700'
+                      }`}>{t}</span>
+                    ))}
+                  </div>
+                </article>
+              ))}
+            </div>
           </div>
         </section>
 
         {/* ===== PRIVACY VIEW ===== */}
-        <section id="view-privacy" className={`view ${activeView === 'privacy' ? 'active' : ''}`} aria-label="Privacy and settings">
-          <div className="settings-wrap">
-            <h1>Privacy &amp; settings</h1>
-            <p className="sub">You own your data. MindMirror never stores raw video or audio. You control everything.</p>
+        <section
+          id="view-privacy"
+          className={`flex-1 overflow-y-auto p-6 md:p-10 ${activeView === 'privacy' ? '' : 'hidden'}`}
+          aria-label="Privacy and settings"
+        >
+          <div className="max-w-xl mx-auto">
+            <h1 className="text-2xl font-bold text-slate-900 mb-1">Privacy & Settings</h1>
+            <p className="text-sm text-slate-400 mb-6">You own your data. MindMirror never stores raw video or audio. You control everything.</p>
 
-            <div className="privacy-notice" role="note">
-              <strong>Data stays with you.</strong> All conversation analysis runs through the AI API securely. No raw camera footage or voice recordings are stored or transmitted. Your journal entries are saved locally in your browser only.
+            <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 mb-6" role="note">
+              <div className="flex items-start gap-2">
+                <span className="text-base mt-0.5">🔒</span>
+                <div className="text-sm text-emerald-800 leading-relaxed">
+                  <strong>Data stays with you.</strong> All conversation analysis runs through the AI API securely. No raw camera footage or voice recordings are stored or transmitted. Your journal entries are saved locally in your browser only.
+                </div>
+              </div>
             </div>
 
-            <div className="setting-group" role="group" aria-label="Session settings">
-              {(['camera', 'voice', 'journal', 'crisis'] as const).map(key => (
-                <div key={key} className="setting-row">
-                  <div className="setting-info">
-                    <div className="setting-label">Enable {key} {key === 'camera' ? 'analysis' : key === 'voice' ? 'analysis' : key === 'journal' ? 'entries' : 'resource prompts'}</div>
-                    <div className="setting-desc">{
+            <div className="bg-white border border-slate-200 rounded-xl overflow-hidden mb-4">
+              {(['camera', 'voice', 'journal', 'crisis'] as const).map((key, idx) => (
+                <div key={key} className={`flex items-center justify-between p-4 ${idx > 0 ? 'border-t border-slate-100' : ''}`}>
+                  <div className="flex-1 mr-4">
+                    <div className="text-sm font-medium text-slate-900">
+                      Enable {key === 'camera' ? 'camera analysis' : key === 'voice' ? 'voice analysis' : key === 'journal' ? 'journal entries' : 'crisis resource prompts'}
+                    </div>
+                    <div className="text-xs text-slate-400 mt-0.5">{
                       key === 'camera' ? 'Detects facial expressions during sessions. Never recorded.'
                       : key === 'voice' ? 'Analyzes tone and energy. Raw audio is discarded immediately.'
                       : key === 'journal' ? 'Stores session transcripts locally for pattern discovery.'
                       : 'Show iCall / Vandrevala helpline when severe distress is detected.'
                     }</div>
                   </div>
-                  <label className="toggle" aria-label={`Enable ${key}`}>
-                    <input type="checkbox" checked={settings[key]} onChange={e => {
-                      const val = e.target.checked;
-                      setSettings(prev => ({ ...prev, [key]: val }));
-                      localStorage.setItem('mm_setting_' + key, String(val));
-                    }} />
-                    <span className="toggle-track" />
-                    <span className="toggle-thumb" />
+                  <label className="relative inline-flex items-center cursor-pointer" aria-label={`Enable ${key}`}>
+                    <input
+                      type="checkbox"
+                      className="sr-only peer"
+                      checked={settings[key]}
+                      onChange={e => {
+                        const val = e.target.checked;
+                        setSettings(prev => ({ ...prev, [key]: val }));
+                        localStorage.setItem('mm_setting_' + key, String(val));
+                      }}
+                    />
+                    <div className="w-11 h-6 bg-slate-200 peer-focus:ring-2 peer-focus:ring-violet-100 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-violet-600 after:shadow-sm"></div>
                   </label>
                 </div>
               ))}
             </div>
 
-            <div className="setting-group" role="group" aria-label="Data controls">
-              <div className="setting-row">
-                <div className="setting-info">
-                  <div className="setting-label">Export my data</div>
-                  <div className="setting-desc">Download all journal entries as JSON.</div>
+            <div className="bg-white border border-slate-200 rounded-xl overflow-hidden mb-6">
+              <div className="flex items-center justify-between p-4 border-b border-slate-100">
+                <div className="flex-1 mr-4">
+                  <div className="text-sm font-medium text-slate-900">Export my data</div>
+                  <div className="text-xs text-slate-400 mt-0.5">Download all journal entries as JSON.</div>
                 </div>
-                <button className="mm-nav-btn" onClick={exportData} aria-label="Download journal data">Download</button>
+                <button
+                  className="px-4 py-1.5 text-xs font-medium rounded-full text-slate-600 hover:bg-slate-100 border border-slate-200 transition-all"
+                  onClick={exportData}
+                  aria-label="Download journal data"
+                >
+                  Download
+                </button>
               </div>
-              <div className="setting-row">
-                <div className="setting-info">
-                  <div className="setting-label">Delete all data</div>
-                  <div className="setting-desc">Permanently removes all local journal entries.</div>
+              <div className="flex items-center justify-between p-4">
+                <div className="flex-1 mr-4">
+                  <div className="text-sm font-medium text-rose-700">Delete all data</div>
+                  <div className="text-xs text-slate-400 mt-0.5">Permanently removes all local journal entries.</div>
                 </div>
-                <button className="mm-nav-btn delete-btn" onClick={deleteData} aria-label="Delete all data">Delete</button>
+                <button
+                  className="px-4 py-1.5 text-xs font-medium rounded-full text-rose-600 hover:bg-rose-50 border border-rose-200 transition-all"
+                  onClick={deleteData}
+                  aria-label="Delete all data"
+                >
+                  Delete
+                </button>
               </div>
             </div>
 
-            <div className="not-therapy" role="note">
-              <strong>⚠ Important:</strong> MindMirror is a wellness companion, not a therapist or medical device. It does not diagnose or treat mental health conditions. If you are in crisis, please contact <strong>iCall: 9152987821</strong> or <strong>Vandrevala Foundation: 1860-2662-345</strong>.
+            <div className="bg-amber-50 border border-amber-200 rounded-xl p-4" role="note">
+              <div className="flex items-start gap-2">
+                <span className="text-base mt-0.5">⚠️</span>
+                <div className="text-sm text-amber-800 leading-relaxed">
+                  <strong>Important:</strong> MindMirror is a wellness companion, not a therapist or medical device. It does not diagnose or treat mental health conditions. If you are in crisis, please contact <strong>iCall: 9152987821</strong> or <strong>Vandrevala Foundation: 1860-2662-345</strong>.
+                </div>
+              </div>
             </div>
           </div>
         </section>
-
       </main>
-    </>
+
+      {/* ===== CRISIS FOOTER ===== */}
+      <footer className="shrink-0 bg-white border-t border-slate-100 px-4 py-2 flex items-center justify-center gap-4 text-[10px] text-slate-400">
+        <span>🧠 MindMirror is a wellness companion, not a medical device</span>
+        <span>·</span>
+        <span>📞 iCall: 9152987821</span>
+        <span>·</span>
+        <span>📞 Vandrevala: 1860-2662-345</span>
+      </footer>
+    </div>
   );
 }

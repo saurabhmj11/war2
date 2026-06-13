@@ -12,13 +12,14 @@ Your core behavior:
 - Keep responses concise: 2-4 sentences max, then the question
 - Be warm, human, and specific — never generic
 - If severe distress (self-harm, hopelessness) is detected, always mention iCall: 9152987821
+- Use **bold** for key phrases to make responses scannable
 
-After your conversational reply (separated by ---JSON---), output ONLY a raw JSON object:
+IMPORTANT: After your conversational reply, output the exact separator ---JSON--- and then ONLY a raw JSON object (no markdown fences, no code blocks):
 {
   "textSentiment": "neutral|anxious|stressed|sad|overwhelmed|hopeful",
   "voiceTone": "calm|strained|flat|tired|tense|energetic",
   "faceSignal": "relaxed|tense|sad|blank|worried|engaged",
-  "triggers": { "SubjectName": 0-100, ... },
+  "triggers": { "SubjectName": 0-100 },
   "burnout": 0-100,
   "confidence": 0-100,
   "contradictionDetected": false,
@@ -29,11 +30,11 @@ After your conversational reply (separated by ---JSON---), output ONLY a raw JSO
 }
 
 Rules for JSON:
-- triggers: only real subjects/issues mentioned (Physics, Chemistry, Time, Parents, Sleep, etc.)
-- burnout: aggregate across whole conversation, increases realistically
-- contradictionDetected: true when self-report contradicts other signals
+- triggers: only real subjects/issues mentioned (Physics, Chemistry, Time, Parents, Sleep, Math, Biology, etc.) with intensity 0-100
+- burnout: aggregate across whole conversation, increases realistically with each stressed message
+- contradictionDetected: true when self-report contradicts other signals (e.g., "I'm fine" + stressed context)
 - adaptiveQuestion: the specific follow-up you asked based on the contradiction
-- insight: only non-empty after 3+ exchanges with a real pattern found
+- insight: only non-empty after 3+ exchanges with a real pattern found (e.g., "Physics appears in 5 of your last 6 negative entries — this might be a knowledge-gap anxiety pattern")
 - crisisFlag: true only if student expresses hopelessness or self-harm thoughts`;
 
 export async function POST(req: NextRequest) {
@@ -56,6 +57,7 @@ export async function POST(req: NextRequest) {
         if (voiceTone && voiceTone !== "calm") {
           signalContext += `\n- Voice tone analysis: ${voiceTone} (the student's voice suggests ${voiceTone} but their words may say otherwise)`;
         }
+        signalContext += "\n[END SIGNAL CONTEXT]";
         lastMsg.content = lastMsg.content + signalContext;
       }
     }
@@ -63,7 +65,7 @@ export async function POST(req: NextRequest) {
     const completion = await zai.chat.completions.create({
       messages: [
         { role: "system", content: SYSTEM_PROMPT },
-        ...enhancedMessages.slice(-20), // Keep last 20 messages for token efficiency
+        ...enhancedMessages.slice(-20),
       ],
       temperature: 0.7,
       max_tokens: 1000,
@@ -82,28 +84,57 @@ export async function POST(req: NextRequest) {
         const jsonStr = fullText
           .slice(splitIdx + 10)
           .trim()
-          .replace(/```json|```/g, "")
+          .replace(/```json\n?/g, "")
+          .replace(/```\n?/g, "")
           .trim();
         meta = JSON.parse(jsonStr);
       } catch {
-        // Fallback: try to find JSON object
+        // Try to find JSON in the remainder
+        const jsonMatch = fullText.slice(splitIdx + 10).match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          try {
+            meta = JSON.parse(jsonMatch[0]);
+          } catch {
+            // JSON parse failed
+          }
+        }
       }
     } else {
-      const jsonMatch = fullText.match(/\{[\s\S]*\}/);
+      // Fallback: try to find JSON object anywhere in the response
+      const jsonMatch = fullText.match(/\{[\s\S]*"textSentiment"[\s\S]*\}/);
       if (jsonMatch) {
         try {
           meta = JSON.parse(jsonMatch[0]);
           reply = fullText.slice(0, jsonMatch.index).trim();
         } catch {
-          // JSON parse failed, just use the text
+          // JSON parse failed
         }
       }
     }
+
+    // Clean up reply - remove any leftover JSON artifacts
+    reply = reply.replace(/```json[\s\S]*?```/g, '').trim();
 
     // Override face/voice signals with actual detected values
     if (meta) {
       if (faceSignal) meta.faceSignal = faceSignal;
       if (voiceTone) meta.voiceTone = voiceTone;
+
+      // Validate and clamp burnout
+      if (typeof meta.burnout === 'number') {
+        meta.burnout = Math.min(100, Math.max(0, Math.round(meta.burnout)));
+      }
+
+      // Validate triggers
+      if (meta.triggers && typeof meta.triggers === 'object') {
+        const validTriggers: Record<string, number> = {};
+        for (const [key, val] of Object.entries(meta.triggers)) {
+          if (typeof val === 'number') {
+            validTriggers[key] = Math.min(100, Math.max(0, Math.round(val)));
+          }
+        }
+        meta.triggers = validTriggers;
+      }
     }
 
     return NextResponse.json({ reply, meta });
