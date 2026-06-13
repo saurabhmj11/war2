@@ -17,6 +17,8 @@ import {
   sanitizeInput,
   getBurnoutDisplay,
   generateClientInsight,
+  getFormattedTime,
+  renderMoodChartSVG,
 } from '../lib/utils';
 
 // ===== extractTags =====
@@ -242,5 +244,40 @@ describe('generateClientInsight', () => {
   test('returns null when no negative sentiment', () => {
     const result = generateClientInsight({ Physics: 65 }, false);
     expect(result).toBeNull();
+  });
+});
+
+// ===== getFormattedTime =====
+describe('getFormattedTime', () => {
+  test('returns a formatted time string', () => {
+    const result = getFormattedTime();
+    expect(typeof result).toBe('string');
+    expect(result.length).toBeGreaterThan(0);
+    expect(result).toMatch(/\d{2}:\d{2}/);
+  });
+});
+
+// ===== renderMoodChartSVG =====
+describe('renderMoodChartSVG', () => {
+  test('returns null for empty history', () => {
+    expect(renderMoodChartSVG([])).toBeNull();
+  });
+
+  test('returns SVG for single data point', () => {
+    const history = [{ score: 80, label: '09:00', timestamp: Date.now() }];
+    const result = renderMoodChartSVG(history);
+    expect(result).toContain('<svg');
+    expect(result).toContain('<circle');
+  });
+
+  test('returns SVG for multiple data points', () => {
+    const history = [
+      { score: 80, label: '09:00', timestamp: Date.now() },
+      { score: 60, label: '10:00', timestamp: Date.now() },
+    ];
+    const result = renderMoodChartSVG(history);
+    expect(result).toContain('<svg');
+    expect(result).toContain('<path');
+    expect(result).toContain('10:00');
   });
 });

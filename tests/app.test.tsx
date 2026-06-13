@@ -120,6 +120,12 @@ describe('extractTags', () => {
     expect(tags).toContain('anxiety');
   });
 
+  it('extracts burnout and self-doubt tags', () => {
+    const tags = extractTags('I am tired and want to give up');
+    expect(tags).toContain('burnout');
+    expect(tags).toContain('self-doubt');
+  });
+
   it('limits to 4 tags maximum', () => {
     const tags = extractTags('Physics Chemistry Math Biology JEE NEET stressed anxious');
     expect(tags.length).toBeLessThanOrEqual(4);
