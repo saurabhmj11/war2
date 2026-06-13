@@ -567,7 +567,15 @@ export default function MindMirrorPage() {
           </div>
 
           {/* Messages */}
-          <div className="flex-1 overflow-y-auto px-4 md:px-6 py-4 space-y-4" role="log" aria-label="Conversation messages" aria-live="polite" tabIndex={0}>
+          <div
+            className="flex-1 overflow-y-auto px-4 md:px-6 py-4 space-y-4"
+            role="log"
+            aria-label="Conversation messages"
+            aria-live="polite"
+            aria-busy={isLoading}
+            aria-atomic={false}
+            tabIndex={0}
+          >
             {messages.map(msg => (
               <motion.div
                 key={msg.id}
@@ -595,7 +603,7 @@ export default function MindMirrorPage() {
                     aria-label={msg.role === 'ai' ? 'MindMirror says' : 'You said'}
                   >
                     {msg.id === 'thinking' ? (
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2" role="status" aria-label="MindMirror is thinking">
                         <div className="flex gap-1">
                           <span className="w-1.5 h-1.5 bg-violet-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
                           <span className="w-1.5 h-1.5 bg-violet-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
@@ -649,11 +657,14 @@ export default function MindMirrorPage() {
                 placeholder="Share what's on your mind…"
                 rows={1}
                 aria-label="Message input"
+                aria-describedby="input-hint"
+                aria-disabled={isLoading}
                 value={inputText}
                 onChange={e => setInputText(e.target.value)}
                 onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } }}
                 disabled={isLoading}
               />
+              <p id="input-hint" className="sr-only">Press Enter to send. Shift+Enter for new line.</p>
               <button
                 className="w-11 h-11 bg-violet-600 hover:bg-violet-700 active:scale-95 rounded-xl flex items-center justify-center transition-all duration-150 shrink-0 shadow-lg shadow-violet-200 disabled:bg-slate-200 disabled:shadow-none disabled:cursor-not-allowed"
                 onClick={() => sendMessage()}
