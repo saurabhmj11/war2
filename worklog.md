@@ -24,3 +24,33 @@ Stage Summary:
 - Fully functional MindMirror demo ready for hackathon submission
 - All key features working: chat with AI, contradiction detection, trigger detection, burnout tracking, mood timeline, crisis detection, journal, privacy
 - Clean lint, no errors, responsive design
+
+---
+Task ID: 2
+Agent: Main Agent
+Task: Add real camera and microphone integration to MindMirror
+
+Work Log:
+- Installed face-api.js and @tensorflow/tfjs for facial expression detection
+- Downloaded face-api.js model files (tiny_face_detector + face_expression) to public/models/
+- Created useSensorAnalysis.ts custom hook with:
+  - Real camera access via getUserMedia + face-api.js expression detection (800ms interval)
+  - Real microphone access via getUserMedia + Web Audio API analysis (200ms interval)
+  - Voice tone analysis: RMS energy, spectral centroid, zero-crossing rate → tone classification
+  - Face expression mapping: neutral→relaxed, happy→engaged, sad→sad, angry→tense, fearful→worried, etc.
+  - Camera preview with face detection overlay (purple bounding box + expression label)
+  - Graceful error handling for denied permissions / missing devices
+  - Proper cleanup on stop/unmount (stop tracks, close AudioContext, clear intervals)
+- Updated page.tsx to use real sensor data instead of static values
+- Added Start/Stop buttons in Signal Analysis section for camera and voice
+- Added camera preview section that appears when camera is active
+- Added voice energy bar visualization
+- Updated Privacy tab to show LIVE status and auto-start/stop sensors on toggle
+- Tested with Agent Browser - all features work, errors handled gracefully
+
+Stage Summary:
+- Real camera and microphone integration is working
+- face-api.js models load successfully from /models/
+- Permission requests are made correctly
+- Sensor data feeds into the AI conversation for contradiction detection
+- Graceful degradation when devices unavailable

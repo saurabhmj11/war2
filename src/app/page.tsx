@@ -2,6 +2,7 @@
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { useSensorAnalysis } from './useSensorAnalysis';
 
 // ===== TYPES =====
 interface Meta {
@@ -94,10 +95,11 @@ export default function MindMirrorPage() {
   const [activeView, setActiveView] = useState<'chat' | 'journal' | 'privacy'>('chat');
   const [showMobilePanel, setShowMobilePanel] = useState(false);
 
+  // Real sensor analysis (camera + microphone)
+  const sensor = useSensorAnalysis();
+
   // Insight panel state
   const [textSentiment, setTextSentiment] = useState('neutral');
-  const [voiceTone, setVoiceTone] = useState('calm');
-  const [faceSignal, setFaceSignal] = useState('relaxed');
   const [triggers, setTriggers] = useState<Record<string, number>>({});
   const [burnout, setBurnout] = useState(0);
   const [moodHistory, setMoodHistory] = useState<{ label: string; score: number }[]>([]);
@@ -105,6 +107,10 @@ export default function MindMirrorPage() {
   const [showInsight, setShowInsight] = useState(false);
   const [contradiction, setContradiction] = useState<{ detected: boolean; type: string; question: string } | null>(null);
   const [exchangeCount, setExchangeCount] = useState(0);
+
+  // Use real sensor values
+  const voiceTone = sensor.voiceTone;
+  const faceSignal = sensor.faceSignal;
 
   // Journal state
   const [journalEntries, setJournalEntries] = useState<JournalEntry[]>([]);
@@ -300,8 +306,8 @@ export default function MindMirrorPage() {
       // Update insight panel with LLM meta + client-side enhancements
       if (meta) {
         if (meta.textSentiment) setTextSentiment(meta.textSentiment);
-        if (meta.voiceTone) setVoiceTone(meta.voiceTone);
-        if (meta.faceSignal) setFaceSignal(meta.faceSignal);
+        // Note: voiceTone and faceSignal now come from real sensors (useSensorAnalysis)
+        // We still log LLM's interpretation for debugging but don't override real sensor data
         
         // Merge triggers from LLM with client-side triggers
         if (meta.triggers && Object.keys(meta.triggers).length > 0) {
@@ -401,8 +407,7 @@ export default function MindMirrorPage() {
     setShowInsight(false);
     setContradiction(null);
     setTextSentiment('neutral');
-    setVoiceTone('calm');
-    setFaceSignal('relaxed');
+    // Note: voiceTone and faceSignal reset automatically when camera/mic stop
     setExchangeCount(0);
   };
 
@@ -740,39 +745,93 @@ export default function MindMirrorPage() {
                     </span>
                   </div>
 
-                  {/* Voice tone */}
+                  {/* Voice tone - REAL MICROPHONE */}
                   <div className="flex items-center gap-3">
-                    <div className="w-8 h-8 rounded-lg bg-emerald-50 flex items-center justify-center shrink-0">
-                      <svg viewBox="0 0 24 24" className="w-4 h-4 text-emerald-500" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${sensor.micActive ? 'bg-emerald-50' : 'bg-slate-100'}`}>
+                      <svg viewBox="0 0 24 24" className={`w-4 h-4 ${sensor.micActive ? 'text-emerald-500' : 'text-slate-400'}`} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                         <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
                         <path d="M19 10v2a7 7 0 0 1-14 0v-2M12 19v4M8 23h8"/>
                       </svg>
                     </div>
                     <div className="flex-1 min-w-0">
-                      <div className="text-[11px] text-slate-400">Voice energy</div>
+                      <div className="text-[11px] text-slate-400">Voice energy {sensor.micActive && <span className="text-emerald-500">(LIVE)</span>}</div>
+                      {sensor.micActive && (
+                        <div className="w-full h-1 bg-slate-200 rounded-full mt-1 overflow-hidden">
+                          <div className="h-full bg-emerald-500 rounded-full transition-all duration-150" style={{ width: `${sensor.voiceEnergy}%` }} />
+                        </div>
+                      )}
                     </div>
+                    <button
+                      className={`text-[10px] px-2 py-0.5 rounded-full font-medium border transition-all ${
+                        sensor.micActive
+                          ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                          : 'bg-slate-50 text-slate-500 border-slate-200 hover:border-emerald-300'
+                      }`}
+                      onClick={sensor.micActive ? sensor.stopMic : sensor.startMic}
+                      aria-label={sensor.micActive ? 'Stop microphone' : 'Start microphone'}
+                    >
+                      {sensor.micActive ? 'Stop' : 'Start'}
+                    </button>
+                  </div>
+                  <div className="flex items-center gap-3 ml-11">
                     <span className={`text-[11px] px-2.5 py-0.5 rounded-full font-medium ${toneColorMap[voiceTone] || 'bg-slate-100 text-slate-700'}`}>
                       {voiceTone === 'calm' ? '😌' : voiceTone === 'tense' ? '😰' : voiceTone === 'tired' ? '😴' : '🎙️'} {voiceTone.charAt(0).toUpperCase() + voiceTone.slice(1)}
                     </span>
+                    {sensor.micError && <span className="text-[10px] text-rose-500">{sensor.micError}</span>}
                   </div>
 
-                  {/* Face signal */}
+                  {/* Face signal - REAL CAMERA */}
                   <div className="flex items-center gap-3">
-                    <div className="w-8 h-8 rounded-lg bg-amber-50 flex items-center justify-center shrink-0">
-                      <svg viewBox="0 0 24 24" className="w-4 h-4 text-amber-500" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${sensor.cameraActive ? 'bg-amber-50' : 'bg-slate-100'}`}>
+                      <svg viewBox="0 0 24 24" className={`w-4 h-4 ${sensor.cameraActive ? 'text-amber-500' : 'text-slate-400'}`} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                         <circle cx="12" cy="12" r="10"/>
                         <path d="M8 14s1.5 2 4 2 4-2 4-2M9 9h.01M15 9h.01"/>
                       </svg>
                     </div>
                     <div className="flex-1 min-w-0">
-                      <div className="text-[11px] text-slate-400">Facial signal</div>
+                      <div className="text-[11px] text-slate-400">Facial signal {sensor.cameraActive && <span className="text-amber-500">(LIVE)</span>}</div>
                     </div>
-                    <span className={`text-[11px] px-2.5 py-0.5 rounded-full font-medium ${faceColorMap[faceSignal] || 'bg-slate-100 text-slate-700'}`}>
-                      {faceSignal === 'relaxed' ? '😌' : faceSignal === 'tense' ? '😟' : faceSignal === 'worried' ? '😰' : '👁️'} {faceSignal.charAt(0).toUpperCase() + faceSignal.slice(1)}
-                    </span>
+                    <button
+                      className={`text-[10px] px-2 py-0.5 rounded-full font-medium border transition-all ${
+                        sensor.cameraActive
+                          ? 'bg-amber-50 text-amber-700 border-amber-200'
+                          : 'bg-slate-50 text-slate-500 border-slate-200 hover:border-amber-300'
+                      }`}
+                      onClick={sensor.cameraActive ? sensor.stopCamera : sensor.startCamera}
+                      aria-label={sensor.cameraActive ? 'Stop camera' : 'Start camera'}
+                    >
+                      {sensor.cameraActive ? 'Stop' : 'Start'}
+                    </button>
                   </div>
                 </div>
               </div>
+
+              {/* Camera Preview */}
+              {sensor.cameraActive && (
+                <div className="px-4 py-3 border-b border-slate-100 bg-slate-900/5">
+                  <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 mb-2">
+                    Camera Preview
+                    <span className="ml-2 text-amber-500">{sensor.dominantExpression} ({sensor.faceConfidence}%)</span>
+                  </div>
+                  <div className="relative rounded-lg overflow-hidden bg-black aspect-[4/3] max-w-[280px] mx-auto">
+                    <video
+                      ref={sensor.videoRef}
+                      className="w-full h-full object-cover"
+                      style={{ transform: 'scaleX(-1)' }}
+                      autoPlay
+                      playsInline
+                      muted
+                      aria-label="Camera preview for facial expression analysis"
+                    />
+                    <div className="absolute bottom-1.5 left-1.5 right-1.5 flex items-center justify-between">
+                      <span className="text-[9px] text-white bg-black/60 px-1.5 py-0.5 rounded">
+                        {sensor.dominantExpression} {sensor.faceConfidence}%
+                      </span>
+                      <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {/* Contradiction Alert */}
               <AnimatePresence>
@@ -969,12 +1028,14 @@ export default function MindMirrorPage() {
               {(['camera', 'voice', 'journal', 'crisis'] as const).map((key, idx) => (
                 <div key={key} className={`flex items-center justify-between p-4 ${idx > 0 ? 'border-t border-slate-100' : ''}`}>
                   <div className="flex-1 mr-4">
-                    <div className="text-sm font-medium text-slate-900">
+                    <div className="text-sm font-medium text-slate-900 flex items-center gap-2">
                       Enable {key === 'camera' ? 'camera analysis' : key === 'voice' ? 'voice analysis' : key === 'journal' ? 'journal entries' : 'crisis resource prompts'}
+                      {key === 'camera' && sensor.cameraActive && <span className="text-[10px] text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded-full">LIVE</span>}
+                      {key === 'voice' && sensor.micActive && <span className="text-[10px] text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded-full">LIVE</span>}
                     </div>
                     <div className="text-xs text-slate-400 mt-0.5">{
-                      key === 'camera' ? 'Detects facial expressions during sessions. Never recorded.'
-                      : key === 'voice' ? 'Analyzes tone and energy. Raw audio is discarded immediately.'
+                      key === 'camera' ? 'Detects facial expressions using face-api.js. Camera feed stays on-device — never recorded or transmitted.'
+                      : key === 'voice' ? 'Analyzes tone and energy via Web Audio API. Raw audio is discarded immediately after analysis.'
                       : key === 'journal' ? 'Stores session transcripts locally for pattern discovery.'
                       : 'Show iCall / Vandrevala helpline when severe distress is detected.'
                     }</div>
@@ -988,6 +1049,13 @@ export default function MindMirrorPage() {
                         const val = e.target.checked;
                         setSettings(prev => ({ ...prev, [key]: val }));
                         localStorage.setItem('mm_setting_' + key, String(val));
+                        // Auto-start/stop sensors when toggled
+                        if (key === 'camera') {
+                          if (val) sensor.startCamera(); else sensor.stopCamera();
+                        }
+                        if (key === 'voice') {
+                          if (val) sensor.startMic(); else sensor.stopMic();
+                        }
                       }}
                     />
                     <div className="w-11 h-6 bg-slate-200 peer-focus:ring-2 peer-focus:ring-violet-100 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-violet-600 after:shadow-sm"></div>

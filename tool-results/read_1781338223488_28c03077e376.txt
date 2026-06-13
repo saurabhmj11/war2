@@ -1,0 +1,1119 @@
+     1→'use client';
+     2→
+     3→import React, { useState, useRef, useEffect, useCallback } from 'react';
+     4→import { motion, AnimatePresence } from 'framer-motion';
+     5→import { useSensorAnalysis } from './useSensorAnalysis';
+     6→
+     7→// ===== TYPES =====
+     8→interface Meta {
+     9→  textSentiment?: string;
+    10→  voiceTone?: string;
+    11→  faceSignal?: string;
+    12→  triggers?: Record<string, number>;
+    13→  burnout?: number;
+    14→  confidence?: number;
+    15→  contradictionDetected?: boolean;
+    16→  contradictionType?: string;
+    17→  adaptiveQuestion?: string;
+    18→  insight?: string;
+    19→  crisisFlag?: boolean;
+    20→}
+    21→
+    22→interface Message {
+    23→  id: string;
+    24→  role: 'user' | 'ai';
+    25→  text: string;
+    26→  time: string;
+    27→  isCrisis?: boolean;
+    28→  meta?: Meta;
+    29→}
+    30→
+    31→interface JournalEntry {
+    32→  id: number;
+    33→  date: string;
+    34→  summary: string;
+    35→  tags: string[];
+    36→  mood?: string;
+    37→}
+    38→
+    39→// ===== CONSTANTS =====
+    40→const moodScoreMap: Record<string, number> = {
+    41→  hopeful: 90, neutral: 60, calm: 75, anxious: 35, stressed: 25, sad: 20, overwhelmed: 15
+    42→};
+    43→
+    44→const moodEmojiMap: Record<string, string> = {
+    45→  hopeful: '🌤️', neutral: '😐', calm: '😌', anxious: '😰', stressed: '😤', sad: '😢', overwhelmed: '🤯'
+    46→};
+    47→
+    48→const sentimentColorMap: Record<string, string> = {
+    49→  neutral: 'bg-slate-100 text-slate-700',
+    50→  anxious: 'bg-amber-50 text-amber-700',
+    51→  stressed: 'bg-rose-50 text-rose-700',
+    52→  sad: 'bg-violet-50 text-violet-700',
+    53→  overwhelmed: 'bg-rose-50 text-rose-700',
+    54→  hopeful: 'bg-emerald-50 text-emerald-700'
+    55→};
+    56→
+    57→const toneColorMap: Record<string, string> = {
+    58→  calm: 'bg-emerald-50 text-emerald-700',
+    59→  strained: 'bg-amber-50 text-amber-700',
+    60→  flat: 'bg-slate-100 text-slate-700',
+    61→  tired: 'bg-amber-50 text-amber-700',
+    62→  tense: 'bg-rose-50 text-rose-700',
+    63→  energetic: 'bg-emerald-50 text-emerald-700'
+    64→};
+    65→
+    66→const faceColorMap: Record<string, string> = {
+    67→  relaxed: 'bg-emerald-50 text-emerald-700',
+    68→  tense: 'bg-rose-50 text-rose-700',
+    69→  sad: 'bg-violet-50 text-violet-700',
+    70→  blank: 'bg-slate-100 text-slate-700',
+    71→  worried: 'bg-amber-50 text-amber-700',
+    72→  engaged: 'bg-emerald-50 text-emerald-700'
+    73→};
+    74→
+    75→const QUICK_REPLIES = [
+    76→  { text: "I'm fine, just tired", icon: '😐' },
+    77→  { text: "Physics is really stressing me out", icon: '⚛️' },
+    78→  { text: "Mock tests didn't go well again", icon: '📝' },
+    79→  { text: "I don't know if I can do this", icon: '😔' },
+    80→  { text: "I studied all day but feel worse", icon: '📚' },
+    81→];
+    82→
+    83→export default function MindMirrorPage() {
+    84→  // ===== STATE =====
+    85→  const [messages, setMessages] = useState<Message[]>([
+    86→    {
+    87→      id: 'welcome',
+    88→      role: 'ai',
+    89→      text: "Hi! I'm **MindMirror** — your personal wellness companion. I'm here to listen without judgment, and sometimes I might notice things in your words that even you haven't fully realized yet.\n\nHow are you feeling about your exam preparation today?",
+    90→      time: 'Just now'
+    91→    }
+    92→  ]);
+    93→  const [inputText, setInputText] = useState('');
+    94→  const [isLoading, setIsLoading] = useState(false);
+    95→  const [activeView, setActiveView] = useState<'chat' | 'journal' | 'privacy'>('chat');
+    96→  const [showMobilePanel, setShowMobilePanel] = useState(false);
+    97→
+    98→  // Real sensor analysis (camera + microphone)
+    99→  const sensor = useSensorAnalysis();
+   100→
+   101→  // Insight panel state
+   102→  const [textSentiment, setTextSentiment] = useState('neutral');
+   103→  const [triggers, setTriggers] = useState<Record<string, number>>({});
+   104→  const [burnout, setBurnout] = useState(0);
+   105→  const [moodHistory, setMoodHistory] = useState<{ label: string; score: number }[]>([]);
+   106→  const [insight, setInsight] = useState('');
+   107→  const [showInsight, setShowInsight] = useState(false);
+   108→  const [contradiction, setContradiction] = useState<{ detected: boolean; type: string; question: string } | null>(null);
+   109→  const [exchangeCount, setExchangeCount] = useState(0);
+   110→
+   111→  // Use real sensor values
+   112→  const voiceTone = sensor.voiceTone;
+   113→  const faceSignal = sensor.faceSignal;
+   114→
+   115→  // Journal state
+   116→  const [journalEntries, setJournalEntries] = useState<JournalEntry[]>([]);
+   117→
+   118→  // Settings state
+   119→  const [settings, setSettings] = useState({ camera: true, voice: true, journal: true, crisis: true });
+   120→
+   121→  // Refs
+   122→  const conversationHistory = useRef<{ role: string; content: string }[]>([]);
+   123→  const messagesEndRef = useRef<HTMLDivElement>(null);
+   124→  const textareaRef = useRef<HTMLTextAreaElement>(null);
+   125→
+   126→  // ===== LOAD SETTINGS & JOURNAL =====
+   127→  useEffect(() => {
+   128→    try {
+   129→      const savedSettings = { camera: true, voice: true, journal: true, crisis: true };
+   130→      ['camera', 'voice', 'journal', 'crisis'].forEach(key => {
+   131→        const stored = localStorage.getItem('mm_setting_' + key);
+   132→        if (stored !== null) (savedSettings as Record<string, boolean>)[key] = stored === 'true';
+   133→      });
+   134→      setSettings(savedSettings);
+   135→
+   136→      const entries = JSON.parse(localStorage.getItem('mindmirror_journal') || '[]') as JournalEntry[];
+   137→      setJournalEntries(entries);
+   138→    } catch { /* ignore */ }
+   139→  }, []);
+   140→
+   141→  // ===== AUTO-SCROLL =====
+   142→  useEffect(() => {
+   143→    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+   144→  }, [messages]);
+   145→
+   146→  // ===== AUTO-RESIZE TEXTAREA =====
+   147→  useEffect(() => {
+   148→    if (textareaRef.current) {
+   149→      textareaRef.current.style.height = 'auto';
+   150→      textareaRef.current.style.height = Math.min(textareaRef.current.scrollHeight, 120) + 'px';
+   151→    }
+   152→  }, [inputText]);
+   153→
+   154→  // ===== HELPERS =====
+   155→  const getTime = () => new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
+   156→
+   157→  const extractTags = (text: string): string[] => {
+   158→    const subjects = ['Physics', 'Chemistry', 'Math', 'Maths', 'Biology', 'English', 'History', 'Geography', 'Economics', 'UPSC', 'JEE', 'NEET', 'CAT', 'GATE'];
+   159→    const tags: string[] = [];
+   160→    subjects.forEach(s => { if (text.toLowerCase().includes(s.toLowerCase())) tags.push(s); });
+   161→    if (/stress|stressed|pressure/i.test(text)) tags.push('stress');
+   162→    if (/tired|exhaust|burnout/i.test(text)) tags.push('burnout');
+   163→    if (/can't|cannot|give up/i.test(text)) tags.push('self-doubt');
+   164→    if (/anxious|worry|nervous/i.test(text)) tags.push('anxiety');
+   165→    return tags.slice(0, 4);
+   166→  };
+   167→
+   168→  // ===== SAVE TO JOURNAL =====
+   169→  const saveToJournal = useCallback((currentMessages: Message[]) => {
+   170→    try {
+   171→      const summary = currentMessages
+   172→        .filter(m => m.role === 'user')
+   173→        .map(m => m.text)
+   174→        .join(' ');
+   175→      if (!summary.trim()) return;
+   176→
+   177→      const entry: JournalEntry = {
+   178→        id: Date.now(),
+   179→        date: new Date().toLocaleString('en-IN'),
+   180→        summary: summary.slice(0, 300),
+   181→        tags: extractTags(summary),
+   182→        mood: textSentiment,
+   183→      };
+   184→      const entries = [entry, ...journalEntries].slice(0, 50);
+   185→      setJournalEntries(entries);
+   186→      localStorage.setItem('mindmirror_journal', JSON.stringify(entries));
+   187→    } catch { /* ignore */ }
+   188→  }, [textSentiment, journalEntries]);
+   189→
+   190→  // ===== FORMAT TEXT WITH MARKDOWN-LIKE BOLD =====
+   191→  const formatText = (text: string) => {
+   192→    return text
+   193→      .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+   194→      .replace(/\n/g, '<br>');
+   195→  };
+   196→
+   197→  // ===== SEND MESSAGE =====
+   198→  const sendMessage = async (overrideText?: string) => {
+   199→    const text = (overrideText || inputText).trim();
+   200→    if (!text || isLoading) return;
+   201→
+   202→    setIsLoading(true);
+   203→    setInputText('');
+   204→
+   205→    // Reset textarea height
+   206→    if (textareaRef.current) {
+   207→      textareaRef.current.style.height = 'auto';
+   208→    }
+   209→
+   210→    // ===== CLIENT-SIDE CRISIS DETECTION =====
+   211→    const CRISIS_KEYWORDS = ['give up on everything', 'end it all', 'no point living', 'suicide', 'kill myself', 'don\'t want to live', 'want to die', 'end my life', 'can\'t go on', 'better off dead'];
+   212→    const isClientCrisis = CRISIS_KEYWORDS.some(kw => text.toLowerCase().includes(kw));
+   213→
+   214→    // ===== CLIENT-SIDE TRIGGER DETECTION =====
+   215→    const subjectKeywords: Record<string, string[]> = {
+   216→      'Physics': ['physics', 'mechanics', 'thermodynamics', 'electro'],
+   217→      'Chemistry': ['chemistry', 'organic', 'inorganic', 'reactions'],
+   218→      'Math': ['math', 'maths', 'calculus', 'algebra', 'trigonometry'],
+   219→      'Biology': ['biology', 'botany', 'zoology'],
+   220→      'Parents': ['parents', 'mom', 'dad', 'family pressure', 'family expects'],
+   221→      'Sleep': ['sleep', 'insomnia', 'can\'t sleep', 'tired', 'exhausted'],
+   222→      'Time': ['time', 'running out of time', 'deadline', 'not enough time'],
+   223→      'Mock Tests': ['mock test', 'mock exam', 'practice test', 'test score'],
+   224→    };
+   225→    const clientTriggers: Record<string, number> = {};
+   226→    for (const [subject, keywords] of Object.entries(subjectKeywords)) {
+   227→      if (keywords.some(kw => text.toLowerCase().includes(kw))) {
+   228→        clientTriggers[subject] = 65;
+   229→      }
+   230→    }
+   231→
+   232→    // ===== CLIENT-SIDE SENTIMENT HINT =====
+   233→    const negativeWords = ['stressed', 'anxious', 'worried', 'scared', 'overwhelmed', 'can\'t', 'hate', 'terrible', 'awful', 'impossible', 'hopeless', 'give up', 'burnout', 'exhausted'];
+   234→    const isNegativeText = negativeWords.some(w => text.toLowerCase().includes(w));
+   235→
+   236→    const userMsg: Message = { id: `u-${Date.now()}`, role: 'user', text, time: getTime() };
+   237→    const newMessages = [...messages, userMsg];
+   238→    setMessages(newMessages);
+   239→
+   240→    // Add thinking indicator
+   241→    const thinkingMsg: Message = { id: 'thinking', role: 'ai', text: '', time: '' };
+   242→    setMessages([...newMessages, thinkingMsg]);
+   243→
+   244→    conversationHistory.current.push({ role: 'user', content: text });
+   245→
+   246→    // Immediately apply client-side triggers to panel
+   247→    if (Object.keys(clientTriggers).length > 0) {
+   248→      setTriggers(prev => {
+   249→        const merged = { ...prev };
+   250→        for (const [key, val] of Object.entries(clientTriggers)) {
+   251→          merged[key] = Math.max(merged[key] || 0, val);
+   252→        }
+   253→        const sorted = Object.entries(merged).sort(([, a], [, b]) => b - a).slice(0, 8);
+   254→        return Object.fromEntries(sorted);
+   255→      });
+   256→    }
+   257→
+   258→    // Immediately increment burnout slightly for negative messages
+   259→    if (isNegativeText) {
+   260→      setBurnout(prev => Math.min(100, prev + 8));
+   261→    }
+   262→
+   263→    try {
+   264→      const response = await fetch('/api/chat', {
+   265→        method: 'POST',
+   266→        headers: { 'Content-Type': 'application/json' },
+   267→        body: JSON.stringify({
+   268→          messages: conversationHistory.current.slice(-20),
+   269→          faceSignal: faceSignal !== 'relaxed' ? faceSignal : undefined,
+   270→          voiceTone: voiceTone !== 'calm' ? voiceTone : undefined,
+   271→        }),
+   272→      });
+   273→
+   274→      if (!response.ok) throw new Error('API error');
+   275→
+   276→      const data = await response.json();
+   277→      const { reply, meta } = data;
+   278→
+   279→      const aiMsg: Message = {
+   280→        id: `a-${Date.now()}`,
+   281→        role: 'ai',
+   282→        text: reply || "I'm here. Could you tell me more?",
+   283→        time: getTime(),
+   284→        meta
+   285→      };
+   286→      const messagesAfterAI = [...newMessages, aiMsg];
+   287→
+   288→      // Add crisis message if flagged by LLM OR client-side detection
+   289→      if ((meta?.crisisFlag || isClientCrisis) && settings.crisis) {
+   290→        const crisisMsg: Message = {
+   291→          id: `c-${Date.now()}`,
+   292→          role: 'ai',
+   293→          text: "I want to make sure you're okay. If things feel really heavy right now, please reach out:\n\n📞 **iCall**: 9152987821\n📞 **Vandrevala Foundation**: 1860-2662-345\n\nThey're trained to listen, and you deserve support beyond what I can offer.",
+   294→          time: getTime(),
+   295→          isCrisis: true
+   296→        };
+   297→        messagesAfterAI.push(crisisMsg);
+   298→      }
+   299→
+   300→      setMessages(messagesAfterAI);
+   301→      conversationHistory.current.push({ role: 'assistant', content: reply });
+   302→
+   303→      // Update exchange count
+   304→      setExchangeCount(prev => prev + 1);
+   305→
+   306→      // Update insight panel with LLM meta + client-side enhancements
+   307→      if (meta) {
+   308→        if (meta.textSentiment) setTextSentiment(meta.textSentiment);
+   309→        // Note: voiceTone and faceSignal now come from real sensors (useSensorAnalysis)
+   310→        // We still log LLM's interpretation for debugging but don't override real sensor data
+   311→        
+   312→        // Merge triggers from LLM with client-side triggers
+   313→        if (meta.triggers && Object.keys(meta.triggers).length > 0) {
+   314→          setTriggers(prev => {
+   315→            const merged = { ...prev, ...meta.triggers };
+   316→            const sorted = Object.entries(merged).sort(([, a], [, b]) => b - a).slice(0, 8);
+   317→            return Object.fromEntries(sorted);
+   318→          });
+   319→        }
+   320→        
+   321→        // Use LLM burnout if higher than current, or increment client-side
+   322→        if (typeof meta.burnout === 'number') {
+   323→          setBurnout(prev => Math.max(prev, meta.burnout));
+   324→        }
+   325→        
+   326→        // Add mood score to history
+   327→        if (meta.textSentiment) {
+   328→          const score = moodScoreMap[meta.textSentiment] ?? 50;
+   329→          setMoodHistory(prev => {
+   330→            const next = [...prev, { label: `#${prev.length + 1}`, score }].slice(-10);
+   331→            return next;
+   332→          });
+   333→        }
+   334→        
+   335→        // Show insight from LLM or generate client-side insight
+   336→        if (meta.insight) {
+   337→          setInsight(meta.insight);
+   338→          setShowInsight(true);
+   339→        } else if (exchangeCount >= 2) {
+   340→          // Client-side insight generation as fallback
+   341→          const triggerNames = Object.keys(triggers);
+   342→          if (triggerNames.length > 0) {
+   343→            const topTrigger = triggerNames[0];
+   344→            const negWords = ['stressed', 'anxious', 'worried', 'overwhelmed', 'can\'t'];
+   345→            const hasNeg = conversationHistory.current
+   346→              .filter(m => m.role === 'user')
+   347→              .some(m => negWords.some(w => m.content.toLowerCase().includes(w)));
+   348→            if (hasNeg) {
+   349→              setInsight(`${topTrigger} appears frequently alongside your stressful thoughts — this might be a knowledge-gap anxiety pattern, not a capability issue.`);
+   350→              setShowInsight(true);
+   351→            }
+   352→          }
+   353→        }
+   354→        
+   355→        if (meta.contradictionDetected) {
+   356→          setContradiction({
+   357→            detected: true,
+   358→            type: meta.contradictionType || 'verbal-vs-facial',
+   359→            question: meta.adaptiveQuestion || ''
+   360→          });
+   361→        } else if (isNegativeText && text.toLowerCase().includes('fine')) {
+   362→          // Client-side contradiction: "fine" + negative context
+   363→          setContradiction({
+   364→            detected: true,
+   365→            type: 'verbal-vs-behavioral',
+   366→            question: 'You say you\'re fine, but your words suggest otherwise. What\'s really going on?'
+   367→          });
+   368→        } else {
+   369→          setContradiction(null);
+   370→        }
+   371→      } else {
+   372→        // No meta from LLM — still apply client-side updates
+   373→        if (isNegativeText) {
+   374→          setMoodHistory(prev => {
+   375→            const next = [...prev, { label: `#${prev.length + 1}`, score: 30 }].slice(-10);
+   376→            return next;
+   377→          });
+   378→        }
+   379→      }
+   380→
+   381→      // Save to journal
+   382→      if (settings.journal) {
+   383→        saveToJournal(messagesAfterAI);
+   384→      }
+   385→    } catch (err) {
+   386→      setMessages(prev => prev.filter(m => m.id !== 'thinking').concat({
+   387→        id: `e-${Date.now()}`, role: 'ai', text: "I had trouble connecting. Please try again.", time: getTime()
+   388→      }));
+   389→      console.error('API error:', err);
+   390→    }
+   391→
+   392→    setIsLoading(false);
+   393→  };
+   394→
+   395→  // ===== CLEAR SESSION =====
+   396→  const clearSession = () => {
+   397→    if (!confirm('Start a new session? Current conversation will be saved to the journal.')) return;
+   398→    if (settings.journal) saveToJournal(messages);
+   399→    conversationHistory.current = [];
+   400→    setMessages([
+   401→      { id: 'new-welcome', role: 'ai', text: "Hi again! Ready for a new session. How are you feeling right now?", time: 'Just now' }
+   402→    ]);
+   403→    setMoodHistory([]);
+   404→    setBurnout(0);
+   405→    setTriggers({});
+   406→    setInsight('');
+   407→    setShowInsight(false);
+   408→    setContradiction(null);
+   409→    setTextSentiment('neutral');
+   410→    // Note: voiceTone and faceSignal reset automatically when camera/mic stop
+   411→    setExchangeCount(0);
+   412→  };
+   413→
+   414→  // ===== EXPORT / DELETE DATA =====
+   415→  const exportData = () => {
+   416→    try {
+   417→      const blob = new Blob([JSON.stringify(journalEntries, null, 2)], { type: 'application/json' });
+   418→      const url = URL.createObjectURL(blob);
+   419→      const a = document.createElement('a');
+   420→      a.href = url; a.download = 'mindmirror_journal.json'; a.click();
+   421→      URL.revokeObjectURL(url);
+   422→    } catch { /* ignore */ }
+   423→  };
+   424→
+   425→  const deleteData = () => {
+   426→    if (!confirm('Delete all journal entries? This cannot be undone.')) return;
+   427→    localStorage.removeItem('mindmirror_journal');
+   428→    setJournalEntries([]);
+   429→  };
+   430→
+   431→  // ===== DERIVED STATE =====
+   432→  const sortedTriggers = Object.entries(triggers).sort(([, a], [, b]) => b - a).slice(0, 6);
+   433→  const burnoutLabel = burnout >= 70 ? 'High' : burnout >= 40 ? 'Moderate' : burnout > 0 ? 'Low' : '—';
+   434→  const burnoutColor = burnout >= 70 ? 'text-rose-600' : burnout >= 40 ? 'text-amber-600' : 'text-emerald-600';
+   435→  const burnoutBarColor = burnout >= 70 ? 'bg-rose-500' : burnout >= 40 ? 'bg-amber-500' : 'bg-emerald-500';
+   436→  const burnoutDesc = burnout >= 70 ? 'Consider taking a real break today.' : burnout >= 40 ? "You're pushing hard. Rest matters." : burnout > 0 ? "You're managing well right now." : 'No data yet';
+   437→
+   438→  // ===== SVG CHART FOR MOOD TIMELINE =====
+   439→  const renderMoodChart = () => {
+   440→    if (moodHistory.length === 0) {
+   441→      return (
+   442→        <div className="text-xs text-slate-400 text-center py-4">
+   443→          Start talking — mood trend will appear
+   444→        </div>
+   445→      );
+   446→    }
+   447→
+   448→    const w = 280;
+   449→    const h = 80;
+   450→    const padX = 24;
+   451→    const padY = 10;
+   452→    const chartW = w - padX * 2;
+   453→    const chartH = h - padY * 2;
+   454→
+   455→    // Handle single-point case (show just a dot)
+   456→    if (moodHistory.length === 1) {
+   457→      const m = moodHistory[0];
+   458→      const px = padX + chartW / 2;
+   459→      const py = padY + chartH - (m.score / 100) * chartH;
+   460→      const moodLabel = Object.entries(moodScoreMap).find(([, v]) => v === m.score)?.[0] || '';
+   461→
+   462→      return (
+   463→        <svg viewBox={`0 0 ${w} ${h}`} className="w-full" aria-label="Mood trend chart">
+   464→          {[0, 25, 50, 75, 100].map(v => {
+   465→            const y = padY + chartH - (v / 100) * chartH;
+   466→            return <line key={v} x1={padX} y1={y} x2={w - padX} y2={y} stroke="#e2e8f0" strokeWidth="0.5" strokeDasharray="3 3" />;
+   467→          })}
+   468→          <circle cx={px} cy={py} r="5" fill="#7c3aed" stroke="#fff" strokeWidth="2" />
+   469→          <text x={w / 2} y={h - 2} textAnchor="middle" className="text-[8px] fill-slate-400" fontFamily="Inter, sans-serif">{moodLabel}</text>
+   470→        </svg>
+   471→      );
+   472→    }
+   473→
+   474→    const points = moodHistory.map((m, i) => ({
+   475→      x: padX + (i / Math.max(moodHistory.length - 1, 1)) * chartW,
+   476→      y: padY + chartH - (m.score / 100) * chartH,
+   477→      score: m.score,
+   478→      label: m.label
+   479→    }));
+   480→
+   481→    const linePath = points.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x} ${p.y}`).join(' ');
+   482→    const areaPath = `${linePath} L ${points[points.length - 1].x} ${padY + chartH} L ${points[0].x} ${padY + chartH} Z`;
+   483→
+   484→    return (
+   485→      <svg viewBox={`0 0 ${w} ${h}`} className="w-full" aria-label="Mood trend chart">
+   486→        {/* Grid lines */}
+   487→        {[0, 25, 50, 75, 100].map(v => {
+   488→          const y = padY + chartH - (v / 100) * chartH;
+   489→          return <line key={v} x1={padX} y1={y} x2={w - padX} y2={y} stroke="#e2e8f0" strokeWidth="0.5" strokeDasharray="3 3" />;
+   490→        })}
+   491→        {/* Area fill */}
+   492→        <path d={areaPath} fill="url(#moodGrad)" opacity="0.3" />
+   493→        {/* Line */}
+   494→        <path d={linePath} fill="none" stroke="#7c3aed" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+   495→        {/* Dots */}
+   496→        {points.map((p, i) => (
+   497→          <g key={i}>
+   498→            <circle cx={p.x} cy={p.y} r="3.5" fill="#7c3aed" stroke="#fff" strokeWidth="1.5" />
+   499→            <text x={p.x} y={h - 2} textAnchor="middle" className="text-[7px] fill-slate-400" fontFamily="Inter, sans-serif">{p.label}</text>
+   500→          </g>
+   501→        ))}
+   502→        <defs>
+   503→          <linearGradient id="moodGrad" x1="0" y1="0" x2="0" y2="1">
+   504→            <stop offset="0%" stopColor="#7c3aed" />
+   505→            <stop offset="100%" stopColor="#7c3aed" stopOpacity="0" />
+   506→          </linearGradient>
+   507→        </defs>
+   508→      </svg>
+   509→    );
+   510→  };
+   511→
+   512→  // ===== RENDER =====
+   513→  return (
+   514→    <div className="flex flex-col h-screen bg-slate-50 overflow-hidden">
+   515→      {/* Skip link */}
+   516→      <a href="#main-content" className="sr-only focus:not-sr-only focus:fixed focus:top-0 focus:left-0 focus:z-[9999] focus:bg-violet-600 focus:text-white focus:px-4 focus:py-2 focus:text-sm">
+   517→        Skip to main content
+   518→      </a>
+   519→
+   520→      {/* ===== HEADER ===== */}
+   521→      <header className="bg-white/80 backdrop-blur-xl border-b border-slate-200 px-4 md:px-6 h-14 flex items-center justify-between sticky top-0 z-50 shrink-0">
+   522→        <div className="flex items-center gap-3">
+   523→          <div className="w-8 h-8 bg-gradient-to-br from-violet-500 to-purple-700 rounded-lg flex items-center justify-center shadow-lg shadow-violet-200">
+   524→            <svg viewBox="0 0 24 24" className="w-4 h-4" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+   525→              <path d="M12 2a7 7 0 0 1 7 7c0 3-1.5 5.5-4 6.8V18H9v-2.2C6.5 14.5 5 12 5 9a7 7 0 0 1 7-7z"/>
+   526→              <path d="M9 21h6M10 18v3M14 18v3"/>
+   527→            </svg>
+   528→          </div>
+   529→          <div>
+   530→            <span className="font-semibold text-slate-900 text-sm">MindMirror</span>
+   531→            <span className="text-[10px] text-slate-400 ml-1 font-normal">beta</span>
+   532→          </div>
+   533→        </div>
+   534→        <nav className="flex items-center gap-1" role="navigation" aria-label="App sections">
+   535→          <button
+   536→            className={`px-3 py-1.5 text-xs font-medium rounded-full transition-all duration-200 ${activeView === 'chat' ? 'bg-violet-600 text-white shadow-md shadow-violet-200' : 'text-slate-600 hover:bg-slate-100'}`}
+   537→            onClick={() => setActiveView('chat')}
+   538→            aria-pressed={activeView === 'chat'}
+   539→          >
+   540→            Session
+   541→          </button>
+   542→          <button
+   543→            className={`px-3 py-1.5 text-xs font-medium rounded-full transition-all duration-200 ${activeView === 'journal' ? 'bg-violet-600 text-white shadow-md shadow-violet-200' : 'text-slate-600 hover:bg-slate-100'}`}
+   544→            onClick={() => setActiveView('journal')}
+   545→            aria-pressed={activeView === 'journal'}
+   546→          >
+   547→            Journal
+   548→          </button>
+   549→          <button
+   550→            className={`px-3 py-1.5 text-xs font-medium rounded-full transition-all duration-200 ${activeView === 'privacy' ? 'bg-violet-600 text-white shadow-md shadow-violet-200' : 'text-slate-600 hover:bg-slate-100'}`}
+   551→            onClick={() => setActiveView('privacy')}
+   552→            aria-pressed={activeView === 'privacy'}
+   553→          >
+   554→            Privacy
+   555→          </button>
+   556→          <button
+   557→            className="md:hidden ml-1 px-2 py-1.5 text-xs font-medium rounded-full text-slate-600 hover:bg-slate-100 transition-all"
+   558→            onClick={() => setShowMobilePanel(!showMobilePanel)}
+   559→            aria-label="Toggle insights panel"
+   560→          >
+   561→            📊
+   562→          </button>
+   563→        </nav>
+   564→      </header>
+   565→
+   566→      {/* ===== MAIN ===== */}
+   567→      <main id="main-content" className="flex-1 flex overflow-hidden" role="main">
+   568→
+   569→        {/* ===== CHAT VIEW ===== */}
+   570→        <section
+   571→          id="view-chat"
+   572→          className={`flex-1 flex flex-col min-w-0 ${activeView === 'chat' ? '' : 'hidden md:flex'}`}
+   573→          aria-label="Conversation session"
+   574→        >
+   575→          {/* Chat top bar */}
+   576→          <div className="px-4 md:px-5 py-3 border-b border-slate-100 flex items-center justify-between bg-white shrink-0">
+   577→            <div className="flex items-center gap-3">
+   578→              <div className="w-9 h-9 rounded-full bg-gradient-to-br from-violet-100 to-purple-100 border-2 border-violet-200 flex items-center justify-center text-base">
+   579→                🧘
+   580→              </div>
+   581→              <div>
+   582→                <div className="text-sm font-medium text-slate-900">MindMirror</div>
+   583→                <div className="flex items-center gap-1.5 text-xs text-slate-400">
+   584→                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" aria-hidden="true" />
+   585→                  Listening actively
+   586→                </div>
+   587→              </div>
+   588→            </div>
+   589→            <div className="flex items-center gap-2">
+   590→              {exchangeCount > 0 && (
+   591→                <span className="text-[10px] text-slate-400 bg-slate-50 px-2 py-1 rounded-full">
+   592→                  {exchangeCount} exchange{exchangeCount !== 1 ? 's' : ''}
+   593→                </span>
+   594→              )}
+   595→              <button
+   596→                className="px-3 py-1.5 text-xs font-medium rounded-full text-slate-600 hover:bg-slate-100 border border-slate-200 transition-all"
+   597→                onClick={clearSession}
+   598→                aria-label="Start new session"
+   599→              >
+   600→                New session
+   601→              </button>
+   602→            </div>
+   603→          </div>
+   604→
+   605→          {/* Messages */}
+   606→          <div className="flex-1 overflow-y-auto px-4 md:px-6 py-4 space-y-4" role="log" aria-label="Conversation messages" aria-live="polite" tabIndex={0}>
+   607→            {messages.map(msg => (
+   608→              <motion.div
+   609→                key={msg.id}
+   610→                initial={{ opacity: 0, y: 12 }}
+   611→                animate={{ opacity: 1, y: 0 }}
+   612→                transition={{ duration: 0.25, ease: 'easeOut' }}
+   613→                className={`flex items-end gap-2.5 ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
+   614→              >
+   615→                {msg.role === 'ai' && (
+   616→                  <div className="w-7 h-7 rounded-full bg-gradient-to-br from-violet-100 to-purple-100 border border-violet-200 flex items-center justify-center text-xs shrink-0">
+   617→                    🧠
+   618→                  </div>
+   619→                )}
+   620→                <div className={`max-w-[80%] md:max-w-[70%]`}>
+   621→                  <div
+   622→                    className={`px-4 py-2.5 text-sm leading-relaxed rounded-2xl ${
+   623→                      msg.id === 'thinking'
+   624→                        ? 'bg-slate-100 text-slate-400 italic rounded-bl-md'
+   625→                        : msg.role === 'ai'
+   626→                          ? msg.isCrisis
+   627→                            ? 'bg-rose-50 border-l-[3px] border-rose-400 text-rose-900 rounded-bl-md'
+   628→                            : 'bg-slate-100 text-slate-800 rounded-bl-md'
+   629→                          : 'bg-violet-600 text-white rounded-br-md'
+   630→                    }`}
+   631→                    role={msg.isCrisis ? 'alert' : undefined}
+   632→                    aria-label={msg.role === 'ai' ? 'MindMirror says' : 'You said'}
+   633→                  >
+   634→                    {msg.id === 'thinking' ? (
+   635→                      <div className="flex items-center gap-2">
+   636→                        <div className="flex gap-1">
+   637→                          <span className="w-1.5 h-1.5 bg-violet-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+   638→                          <span className="w-1.5 h-1.5 bg-violet-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+   639→                          <span className="w-1.5 h-1.5 bg-violet-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+   640→                        </div>
+   641→                        <span>MindMirror is reflecting…</span>
+   642→                      </div>
+   643→                    ) : (
+   644→                      <span dangerouslySetInnerHTML={{ __html: formatText(msg.text) }} />
+   645→                    )}
+   646→                  </div>
+   647→                  {msg.time && (
+   648→                    <div className={`text-[10px] text-slate-400 mt-1 ${msg.role === 'user' ? 'text-right' : 'text-left'}`}>
+   649→                      {msg.time}
+   650→                    </div>
+   651→                  )}
+   652→                </div>
+   653→                {msg.role === 'user' && (
+   654→                  <div className="w-7 h-7 rounded-full bg-slate-100 border border-slate-200 flex items-center justify-center text-xs shrink-0">
+   655→                    🎓
+   656→                  </div>
+   657→                )}
+   658→              </motion.div>
+   659→            ))}
+   660→            <div ref={messagesEndRef} />
+   661→          </div>
+   662→
+   663→          {/* Quick replies */}
+   664→          <div className="px-4 md:px-5 py-2 border-t border-slate-100 bg-white shrink-0">
+   665→            <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-hide">
+   666→              <span className="text-[10px] text-slate-400 font-medium uppercase tracking-wider shrink-0">Quick</span>
+   667→              {QUICK_REPLIES.map(qr => (
+   668→                <button
+   669→                  key={qr.text}
+   670→                  className="shrink-0 px-3 py-1.5 text-xs bg-white border border-slate-200 rounded-full text-slate-600 hover:border-violet-300 hover:text-violet-700 hover:bg-violet-50 transition-all duration-150 whitespace-nowrap"
+   671→                  onClick={() => sendMessage(qr.text)}
+   672→                  disabled={isLoading}
+   673→                >
+   674→                  {qr.icon} {qr.text}
+   675→                </button>
+   676→              ))}
+   677→            </div>
+   678→          </div>
+   679→
+   680→          {/* Input area */}
+   681→          <div className="px-4 md:px-5 py-3 border-t border-slate-200 bg-white shrink-0">
+   682→            <div className="flex items-end gap-2">
+   683→              <textarea
+   684→                ref={textareaRef}
+   685→                className="flex-1 resize-none border border-slate-200 rounded-xl px-4 py-2.5 text-sm leading-relaxed min-h-[44px] max-h-[120px] outline-none transition-all duration-150 text-slate-900 bg-slate-50 focus:border-violet-500 focus:bg-white focus:ring-2 focus:ring-violet-100 placeholder:text-slate-400"
+   686→                placeholder="Share what's on your mind…"
+   687→                rows={1}
+   688→                aria-label="Message input"
+   689→                value={inputText}
+   690→                onChange={e => setInputText(e.target.value)}
+   691→                onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } }}
+   692→                disabled={isLoading}
+   693→              />
+   694→              <button
+   695→                className="w-11 h-11 bg-violet-600 hover:bg-violet-700 active:scale-95 rounded-xl flex items-center justify-center transition-all duration-150 shrink-0 shadow-lg shadow-violet-200 disabled:bg-slate-200 disabled:shadow-none disabled:cursor-not-allowed"
+   696→                onClick={() => sendMessage()}
+   697→                disabled={!inputText.trim() || isLoading}
+   698→                aria-label="Send message"
+   699→              >
+   700→                <svg viewBox="0 0 24 24" className="w-4 h-4" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+   701→                  <line x1="22" y1="2" x2="11" y2="13"/>
+   702→                  <polygon points="22 2 15 22 11 13 2 9 22 2"/>
+   703→                </svg>
+   704→              </button>
+   705→            </div>
+   706→          </div>
+   707→        </section>
+   708→
+   709→        {/* ===== INSIGHTS PANEL ===== */}
+   710→        <AnimatePresence>
+   711→          {(activeView === 'chat' || (activeView !== 'chat' && typeof window !== 'undefined' && window.innerWidth >= 768)) && (
+   712→            <aside
+   713→              id="panel-insights"
+   714→              className={`w-[340px] border-l border-slate-200 bg-slate-50/80 overflow-y-auto shrink-0 hidden md:flex flex-col ${showMobilePanel ? '!flex fixed inset-[56px_0_0_0] z-[200] w-full' : ''}`}
+   715→              role="complementary"
+   716→              aria-label="Real-time emotional insights"
+   717→            >
+   718→              {/* Panel header */}
+   719→              <div className="px-4 py-3 border-b border-slate-200 bg-white/50 backdrop-blur-sm sticky top-0 z-10">
+   720→                <div className="flex items-center justify-between">
+   721→                  <h2 className="text-xs font-semibold uppercase tracking-wider text-slate-400">Live Insights</h2>
+   722→                  <div className="flex items-center gap-1">
+   723→                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+   724→                    <span className="text-[10px] text-emerald-600 font-medium">Active</span>
+   725→                  </div>
+   726→                </div>
+   727→              </div>
+   728→
+   729→              {/* Signal Analysis */}
+   730→              <div className="px-4 py-3 border-b border-slate-100">
+   731→                <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 mb-3">Signal Analysis</div>
+   732→                <div className="space-y-2.5">
+   733→                  {/* Text sentiment */}
+   734→                  <div className="flex items-center gap-3">
+   735→                    <div className="w-8 h-8 rounded-lg bg-violet-50 flex items-center justify-center shrink-0">
+   736→                      <svg viewBox="0 0 24 24" className="w-4 h-4 text-violet-500" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+   737→                        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+   738→                      </svg>
+   739→                    </div>
+   740→                    <div className="flex-1 min-w-0">
+   741→                      <div className="text-[11px] text-slate-400">Text tone</div>
+   742→                    </div>
+   743→                    <span className={`text-[11px] px-2.5 py-0.5 rounded-full font-medium ${sentimentColorMap[textSentiment] || 'bg-slate-100 text-slate-700'}`}>
+   744→                      {moodEmojiMap[textSentiment] || '😐'} {textSentiment.charAt(0).toUpperCase() + textSentiment.slice(1)}
+   745→                    </span>
+   746→                  </div>
+   747→
+   748→                  {/* Voice tone - REAL MICROPHONE */}
+   749→                  <div className="flex items-center gap-3">
+   750→                    <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${sensor.micActive ? 'bg-emerald-50' : 'bg-slate-100'}`}>
+   751→                      <svg viewBox="0 0 24 24" className={`w-4 h-4 ${sensor.micActive ? 'text-emerald-500' : 'text-slate-400'}`} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+   752→                        <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+   753→                        <path d="M19 10v2a7 7 0 0 1-14 0v-2M12 19v4M8 23h8"/>
+   754→                      </svg>
+   755→                    </div>
+   756→                    <div className="flex-1 min-w-0">
+   757→                      <div className="text-[11px] text-slate-400">Voice energy {sensor.micActive && <span className="text-emerald-500">(LIVE)</span>}</div>
+   758→                      {sensor.micActive && (
+   759→                        <div className="w-full h-1 bg-slate-200 rounded-full mt-1 overflow-hidden">
+   760→                          <div className="h-full bg-emerald-500 rounded-full transition-all duration-150" style={{ width: `${sensor.voiceEnergy}%` }} />
+   761→                        </div>
+   762→                      )}
+   763→                    </div>
+   764→                    <button
+   765→                      className={`text-[10px] px-2 py-0.5 rounded-full font-medium border transition-all ${
+   766→                        sensor.micActive
+   767→                          ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+   768→                          : 'bg-slate-50 text-slate-500 border-slate-200 hover:border-emerald-300'
+   769→                      }`}
+   770→                      onClick={sensor.micActive ? sensor.stopMic : sensor.startMic}
+   771→                      aria-label={sensor.micActive ? 'Stop microphone' : 'Start microphone'}
+   772→                    >
+   773→                      {sensor.micActive ? 'Stop' : 'Start'}
+   774→                    </button>
+   775→                  </div>
+   776→                  <div className="flex items-center gap-3 ml-11">
+   777→                    <span className={`text-[11px] px-2.5 py-0.5 rounded-full font-medium ${toneColorMap[voiceTone] || 'bg-slate-100 text-slate-700'}`}>
+   778→                      {voiceTone === 'calm' ? '😌' : voiceTone === 'tense' ? '😰' : voiceTone === 'tired' ? '😴' : '🎙️'} {voiceTone.charAt(0).toUpperCase() + voiceTone.slice(1)}
+   779→                    </span>
+   780→                    {sensor.micError && <span className="text-[10px] text-rose-500">{sensor.micError}</span>}
+   781→                  </div>
+   782→
+   783→                  {/* Face signal - REAL CAMERA */}
+   784→                  <div className="flex items-center gap-3">
+   785→                    <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${sensor.cameraActive ? 'bg-amber-50' : 'bg-slate-100'}`}>
+   786→                      <svg viewBox="0 0 24 24" className={`w-4 h-4 ${sensor.cameraActive ? 'text-amber-500' : 'text-slate-400'}`} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+   787→                        <circle cx="12" cy="12" r="10"/>
+   788→                        <path d="M8 14s1.5 2 4 2 4-2 4-2M9 9h.01M15 9h.01"/>
+   789→                      </svg>
+   790→                    </div>
+   791→                    <div className="flex-1 min-w-0">
+   792→                      <div className="text-[11px] text-slate-400">Facial signal {sensor.cameraActive && <span className="text-amber-500">(LIVE)</span>}</div>
+   793→                    </div>
+   794→                    <button
+   795→                      className={`text-[10px] px-2 py-0.5 rounded-full font-medium border transition-all ${
+   796→                        sensor.cameraActive
+   797→                          ? 'bg-amber-50 text-amber-700 border-amber-200'
+   798→                          : 'bg-slate-50 text-slate-500 border-slate-200 hover:border-amber-300'
+   799→                      }`}
+   800→                      onClick={sensor.cameraActive ? sensor.stopCamera : sensor.startCamera}
+   801→                      aria-label={sensor.cameraActive ? 'Stop camera' : 'Start camera'}
+   802→                    >
+   803→                      {sensor.cameraActive ? 'Stop' : 'Start'}
+   804→                    </button>
+   805→                  </div>
+   806→                </div>
+   807→              </div>
+   808→
+   809→              {/* Camera Preview */}
+   810→              {sensor.cameraActive && (
+   811→                <div className="px-4 py-3 border-b border-slate-100 bg-slate-900/5">
+   812→                  <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 mb-2">
+   813→                    Camera Preview
+   814→                    <span className="ml-2 text-amber-500">{sensor.dominantExpression} ({sensor.faceConfidence}%)</span>
+   815→                  </div>
+   816→                  <div className="relative rounded-lg overflow-hidden bg-black aspect-[4/3] max-w-[280px] mx-auto">
+   817→                    <video
+   818→                      ref={sensor.videoRef}
+   819→                      className="w-full h-full object-cover"
+   820→                      style={{ transform: 'scaleX(-1)' }}
+   821→                      autoPlay
+   822→                      playsInline
+   823→                      muted
+   824→                      aria-label="Camera preview for facial expression analysis"
+   825→                    />
+   826→                    <div className="absolute bottom-1.5 left-1.5 right-1.5 flex items-center justify-between">
+   827→                      <span className="text-[9px] text-white bg-black/60 px-1.5 py-0.5 rounded">
+   828→                        {sensor.dominantExpression} {sensor.faceConfidence}%
+   829→                      </span>
+   830→                      <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+   831→                    </div>
+   832→                  </div>
+   833→                </div>
+   834→              )}
+   835→
+   836→              {/* Contradiction Alert */}
+   837→              <AnimatePresence>
+   838→                {contradiction?.detected && (
+   839→                  <motion.div
+   840→                    initial={{ opacity: 0, height: 0 }}
+   841→                    animate={{ opacity: 1, height: 'auto' }}
+   842→                    exit={{ opacity: 0, height: 0 }}
+   843→                    className="px-4 py-3 border-b border-slate-100 bg-gradient-to-r from-amber-50 to-orange-50"
+   844→                  >
+   845→                    <div className="text-[10px] font-semibold uppercase tracking-wider text-amber-500 mb-2 flex items-center gap-1.5">
+   846→                      <motion.span
+   847→                        animate={{ scale: [1, 1.2, 1] }}
+   848→                        transition={{ repeat: Infinity, duration: 1.5 }}
+   849→                      >
+   850→                        ⚡
+   851→                      </motion.span>
+   852→                      Contradiction Detected
+   853→                    </div>
+   854→                    <div className="bg-white/80 rounded-xl p-3 border border-amber-200">
+   855→                      <div className="text-[11px] font-bold text-orange-700 uppercase tracking-wide mb-1.5">
+   856→                        {contradiction.type.replace(/-/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
+   857→                      </div>
+   858→                      <div className="text-xs text-amber-900/80 leading-relaxed">
+   859→                        Your words and signals don&apos;t match. MindMirror is adapting its questions to probe deeper.
+   860→                        {contradiction.question && (
+   861→                          <div className="mt-2 pt-2 border-t border-amber-200/50">
+   862→                            <span className="font-semibold text-amber-800">Adaptive question: </span>
+   863→                            &ldquo;{contradiction.question}&rdquo;
+   864→                          </div>
+   865→                        )}
+   866→                      </div>
+   867→                    </div>
+   868→                  </motion.div>
+   869→                )}
+   870→              </AnimatePresence>
+   871→
+   872→              {/* Stress Triggers */}
+   873→              <div className="px-4 py-3 border-b border-slate-100">
+   874→                <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 mb-3">Stress Triggers Detected</div>
+   875→                {sortedTriggers.length === 0 ? (
+   876→                  <div className="text-xs text-slate-400 text-center py-3">Start talking — patterns will appear here</div>
+   877→                ) : (
+   878→                  <div className="space-y-2.5">
+   879→                    {sortedTriggers.map(([name, val]) => (
+   880→                      <div key={name} className="flex items-center gap-2">
+   881→                        <span className="text-xs text-slate-700 w-20 truncate shrink-0" title={name}>{name}</span>
+   882→                        <div className="flex-1 h-2 bg-slate-200 rounded-full overflow-hidden">
+   883→                          <motion.div
+   884→                            className={`h-full rounded-full ${val >= 70 ? 'bg-rose-500' : val >= 40 ? 'bg-amber-500' : 'bg-emerald-500'}`}
+   885→                            initial={{ width: 0 }}
+   886→                            animate={{ width: `${val}%` }}
+   887→                            transition={{ duration: 0.7, ease: [0.4, 0, 0.2, 1] }}
+   888→                            role="img"
+   889→                            aria-label={`${name} stress level ${val}%`}
+   890→                          />
+   891→                        </div>
+   892→                        <span className="text-[11px] text-slate-400 w-8 text-right shrink-0">{val}%</span>
+   893→                      </div>
+   894→                    ))}
+   895→                  </div>
+   896→                )}
+   897→              </div>
+   898→
+   899→              {/* Burnout Risk */}
+   900→              <div className="px-4 py-3 border-b border-slate-100">
+   901→                <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 mb-3">Burnout Risk</div>
+   902→                <div className="space-y-2">
+   903→                  <div
+   904→                    className="h-3 bg-slate-200 rounded-full overflow-hidden"
+   905→                    role="progressbar"
+   906→                    aria-label="Burnout risk level"
+   907→                    aria-valuenow={burnout}
+   908→                    aria-valuemin={0}
+   909→                    aria-valuemax={100}
+   910→                  >
+   911→                    <motion.div
+   912→                      className={`h-full rounded-full ${burnoutBarColor}`}
+   913→                      initial={{ width: 0 }}
+   914→                      animate={{ width: `${burnout}%` }}
+   915→                      transition={{ duration: 0.8, ease: [0.4, 0, 0.2, 1] }}
+   916→                    />
+   917→                  </div>
+   918→                  <div className="flex items-center justify-between">
+   919→                    <span className={`text-xs font-semibold ${burnoutColor}`}>{burnoutLabel}</span>
+   920→                    <span className="text-xs text-slate-400">{burnout > 0 ? `${burnout}%` : '—'}</span>
+   921→                  </div>
+   922→                  <div className="text-[11px] text-slate-400">{burnoutDesc}</div>
+   923→                </div>
+   924→              </div>
+   925→
+   926→              {/* Mood Timeline */}
+   927→              <div className="px-4 py-3 border-b border-slate-100">
+   928→                <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 mb-3">Mood Over Session</div>
+   929→                {renderMoodChart()}
+   930→              </div>
+   931→
+   932→              {/* Personalized Insight */}
+   933→              <div className="px-4 py-3" aria-live="polite">
+   934→                <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 mb-3">Personalized Insight</div>
+   935→                {showInsight && insight ? (
+   936→                  <motion.div
+   937→                    initial={{ opacity: 0, y: 8 }}
+   938→                    animate={{ opacity: 1, y: 0 }}
+   939→                    className="bg-violet-50 border border-violet-200 rounded-xl p-3"
+   940→                  >
+   941→                    <div className="flex items-center gap-1.5 mb-2">
+   942→                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#7c3aed" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+   943→                        <circle cx="12" cy="12" r="10"/>
+   944→                        <line x1="12" y1="8" x2="12" y2="12"/>
+   945→                        <line x1="12" y1="16" x2="12.01" y2="16"/>
+   946→                      </svg>
+   947→                      <span className="text-[11px] font-bold text-violet-700 uppercase tracking-wide">Pattern Found</span>
+   948→                    </div>
+   949→                    <p className="text-xs text-violet-900 leading-relaxed">{insight}</p>
+   950→                  </motion.div>
+   951→                ) : (
+   952→                  <div className="text-xs text-slate-400 text-center py-3">Insight appears after a few exchanges</div>
+   953→                )}
+   954→              </div>
+   955→            </aside>
+   956→          )}
+   957→        </AnimatePresence>
+   958→
+   959→        {/* ===== JOURNAL VIEW ===== */}
+   960→        <section
+   961→          id="view-journal"
+   962→          className={`flex-1 overflow-y-auto p-6 md:p-10 ${activeView === 'journal' ? '' : 'hidden'}`}
+   963→          aria-label="Journal entries"
+   964→        >
+   965→          <div className="max-w-2xl mx-auto">
+   966→            <div className="mb-8">
+   967→              <h1 className="text-2xl font-bold text-slate-900 mb-1">Your Journal</h1>
+   968→              <p className="text-sm text-slate-400">Every conversation is saved here. Patterns are discovered across entries over time.</p>
+   969→            </div>
+   970→            <div className="space-y-4">
+   971→              {journalEntries.length === 0 ? (
+   972→                <div className="text-center py-12">
+   973→                  <div className="text-4xl mb-3">📓</div>
+   974→                  <div className="text-sm text-slate-400">No entries yet. Start a session to record your first journal entry.</div>
+   975→                </div>
+   976→              ) : journalEntries.map(e => (
+   977→                <article
+   978→                  key={e.id}
+   979→                  className="bg-white border border-slate-200 rounded-xl p-5 hover:border-violet-200 hover:shadow-md transition-all cursor-pointer"
+   980→                  tabIndex={0}
+   981→                  aria-label={`Journal entry from ${e.date}`}
+   982→                >
+   983→                  <div className="flex items-center justify-between mb-2">
+   984→                    <div className="text-xs text-slate-400">{e.date}</div>
+   985→                    {e.mood && (
+   986→                      <span className={`text-[11px] px-2 py-0.5 rounded-full font-medium ${sentimentColorMap[e.mood] || 'bg-slate-100 text-slate-700'}`}>
+   987→                        {moodEmojiMap[e.mood] || '😐'} {e.mood}
+   988→                      </span>
+   989→                    )}
+   990→                  </div>
+   991→                  <div className="text-sm text-slate-700 leading-relaxed line-clamp-3">{e.summary}</div>
+   992→                  <div className="flex gap-1.5 mt-3 flex-wrap">
+   993→                    {e.tags.map(t => (
+   994→                      <span key={t} className={`text-[11px] px-2 py-0.5 rounded-full font-medium ${
+   995→                        t === 'stress' || t === 'self-doubt' ? 'bg-rose-50 text-rose-700' :
+   996→                        t === 'burnout' ? 'bg-amber-50 text-amber-700' :
+   997→                        t === 'anxiety' ? 'bg-amber-50 text-amber-700' :
+   998→                        'bg-violet-50 text-violet-700'
+   999→                      }`}>{t}</span>
+  1000→                    ))}
+  1001→                  </div>
+  1002→                </article>
+  1003→              ))}
+  1004→            </div>
+  1005→          </div>
+  1006→        </section>
+  1007→
+  1008→        {/* ===== PRIVACY VIEW ===== */}
+  1009→        <section
+  1010→          id="view-privacy"
+  1011→          className={`flex-1 overflow-y-auto p-6 md:p-10 ${activeView === 'privacy' ? '' : 'hidden'}`}
+  1012→          aria-label="Privacy and settings"
+  1013→        >
+  1014→          <div className="max-w-xl mx-auto">
+  1015→            <h1 className="text-2xl font-bold text-slate-900 mb-1">Privacy & Settings</h1>
+  1016→            <p className="text-sm text-slate-400 mb-6">You own your data. MindMirror never stores raw video or audio. You control everything.</p>
+  1017→
+  1018→            <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 mb-6" role="note">
+  1019→              <div className="flex items-start gap-2">
+  1020→                <span className="text-base mt-0.5">🔒</span>
+  1021→                <div className="text-sm text-emerald-800 leading-relaxed">
+  1022→                  <strong>Data stays with you.</strong> All conversation analysis runs through the AI API securely. No raw camera footage or voice recordings are stored or transmitted. Your journal entries are saved locally in your browser only.
+  1023→                </div>
+  1024→              </div>
+  1025→            </div>
+  1026→
+  1027→            <div className="bg-white border border-slate-200 rounded-xl overflow-hidden mb-4">
+  1028→              {(['camera', 'voice', 'journal', 'crisis'] as const).map((key, idx) => (
+  1029→                <div key={key} className={`flex items-center justify-between p-4 ${idx > 0 ? 'border-t border-slate-100' : ''}`}>
+  1030→                  <div className="flex-1 mr-4">
+  1031→                    <div className="text-sm font-medium text-slate-900 flex items-center gap-2">
+  1032→                      Enable {key === 'camera' ? 'camera analysis' : key === 'voice' ? 'voice analysis' : key === 'journal' ? 'journal entries' : 'crisis resource prompts'}
+  1033→                      {key === 'camera' && sensor.cameraActive && <span className="text-[10px] text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded-full">LIVE</span>}
+  1034→                      {key === 'voice' && sensor.micActive && <span className="text-[10px] text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded-full">LIVE</span>}
+  1035→                    </div>
+  1036→                    <div className="text-xs text-slate-400 mt-0.5">{
+  1037→                      key === 'camera' ? 'Detects facial expressions using face-api.js. Camera feed stays on-device — never recorded or transmitted.'
+  1038→                      : key === 'voice' ? 'Analyzes tone and energy via Web Audio API. Raw audio is discarded immediately after analysis.'
+  1039→                      : key === 'journal' ? 'Stores session transcripts locally for pattern discovery.'
+  1040→                      : 'Show iCall / Vandrevala helpline when severe distress is detected.'
+  1041→                    }</div>
+  1042→                  </div>
+  1043→                  <label className="relative inline-flex items-center cursor-pointer" aria-label={`Enable ${key}`}>
+  1044→                    <input
+  1045→                      type="checkbox"
+  1046→                      className="sr-only peer"
+  1047→                      checked={settings[key]}
+  1048→                      onChange={e => {
+  1049→                        const val = e.target.checked;
+  1050→                        setSettings(prev => ({ ...prev, [key]: val }));
+  1051→                        localStorage.setItem('mm_setting_' + key, String(val));
+  1052→                        // Auto-start/stop sensors when toggled
+  1053→                        if (key === 'camera') {
+  1054→                          if (val) sensor.startCamera(); else sensor.stopCamera();
+  1055→                        }
+  1056→                        if (key === 'voice') {
+  1057→                          if (val) sensor.startMic(); else sensor.stopMic();
+  1058→                        }
+  1059→                      }}
+  1060→                    />
+  1061→                    <div className="w-11 h-6 bg-slate-200 peer-focus:ring-2 peer-focus:ring-violet-100 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-violet-600 after:shadow-sm"></div>
+  1062→                  </label>
+  1063→                </div>
+  1064→              ))}
+  1065→            </div>
+  1066→
+  1067→            <div className="bg-white border border-slate-200 rounded-xl overflow-hidden mb-6">
+  1068→              <div className="flex items-center justify-between p-4 border-b border-slate-100">
+  1069→                <div className="flex-1 mr-4">
+  1070→                  <div className="text-sm font-medium text-slate-900">Export my data</div>
+  1071→                  <div className="text-xs text-slate-400 mt-0.5">Download all journal entries as JSON.</div>
+  1072→                </div>
+  1073→                <button
+  1074→                  className="px-4 py-1.5 text-xs font-medium rounded-full text-slate-600 hover:bg-slate-100 border border-slate-200 transition-all"
+  1075→                  onClick={exportData}
+  1076→                  aria-label="Download journal data"
+  1077→                >
+  1078→                  Download
+  1079→                </button>
+  1080→              </div>
+  1081→              <div className="flex items-center justify-between p-4">
+  1082→                <div className="flex-1 mr-4">
+  1083→                  <div className="text-sm font-medium text-rose-700">Delete all data</div>
+  1084→                  <div className="text-xs text-slate-400 mt-0.5">Permanently removes all local journal entries.</div>
+  1085→                </div>
+  1086→                <button
+  1087→                  className="px-4 py-1.5 text-xs font-medium rounded-full text-rose-600 hover:bg-rose-50 border border-rose-200 transition-all"
+  1088→                  onClick={deleteData}
+  1089→                  aria-label="Delete all data"
+  1090→                >
+  1091→                  Delete
+  1092→                </button>
+  1093→              </div>
+  1094→            </div>
+  1095→
+  1096→            <div className="bg-amber-50 border border-amber-200 rounded-xl p-4" role="note">
+  1097→              <div className="flex items-start gap-2">
+  1098→                <span className="text-base mt-0.5">⚠️</span>
+  1099→                <div className="text-sm text-amber-800 leading-relaxed">
+  1100→                  <strong>Important:</strong> MindMirror is a wellness companion, not a therapist or medical device. It does not diagnose or treat mental health conditions. If you are in crisis, please contact <strong>iCall: 9152987821</strong> or <strong>Vandrevala Foundation: 1860-2662-345</strong>.
+  1101→                </div>
+  1102→              </div>
+  1103→            </div>
+  1104→          </div>
+  1105→        </section>
+  1106→      </main>
+  1107→
+  1108→      {/* ===== CRISIS FOOTER ===== */}
+  1109→      <footer className="shrink-0 bg-white border-t border-slate-100 px-4 py-2 flex items-center justify-center gap-4 text-[10px] text-slate-400">
+  1110→        <span>🧠 MindMirror is a wellness companion, not a medical device</span>
+  1111→        <span>·</span>
+  1112→        <span>📞 iCall: 9152987821</span>
+  1113→        <span>·</span>
+  1114→        <span>📞 Vandrevala: 1860-2662-345</span>
+  1115→      </footer>
+  1116→    </div>
+  1117→  );
+  1118→}
+  1119→
