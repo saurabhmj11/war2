@@ -5,7 +5,7 @@
  * Run with: bun test
  */
 
-import { describe, test, expect } from 'bun:test';
+import { describe, test, expect } from 'vitest';
 import {
   extractTags,
   detectCrisisKeywords,

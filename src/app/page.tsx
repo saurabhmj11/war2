@@ -3,33 +3,92 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useSensorAnalysis } from './useSensorAnalysis';
+import { sanitizeHtml } from '../lib/sanitize';
 import {
-  type Meta,
-  type Message,
-  type JournalEntry,
-  type MoodDataPoint,
-  MOOD_SCORE_MAP,
-  MOOD_EMOJI_MAP,
-  SENTIMENT_COLOR_MAP,
-  TONE_COLOR_MAP,
-  FACE_COLOR_MAP,
-  QUICK_REPLIES,
-  CRISIS_KEYWORDS,
-} from './lib/constants';
-import {
-  extractTags,
-  detectCrisisKeywords,
+  detectCrisis,
   detectTriggers,
-  hasNegativeSentiment,
-  calculateBurnoutIncrement,
-  getFormattedTime,
-  formatMessageText,
+  isNegative,
+  detectClientContradiction,
+  extractTags,
   mergeTriggers,
-  sanitizeInput,
-  getBurnoutDisplay,
-  generateClientInsight,
-  renderMoodChartSVG,
-} from './lib/utils';
+  MOOD_SCORE_MAP,
+} from '../lib/mindmirror';
+
+// ===== TYPES =====
+interface Meta {
+  textSentiment?: string;
+  voiceTone?: string;
+  faceSignal?: string;
+  triggers?: Record<string, number>;
+  burnout?: number;
+  confidence?: number;
+  contradictionDetected?: boolean;
+  contradictionType?: string;
+  adaptiveQuestion?: string;
+  insight?: string;
+  crisisFlag?: boolean;
+}
+
+interface Message {
+  id: string;
+  role: 'user' | 'ai';
+  text: string;
+  time: string;
+  isCrisis?: boolean;
+  meta?: Meta;
+}
+
+interface JournalEntry {
+  id: number;
+  date: string;
+  summary: string;
+  tags: string[];
+  mood?: string;
+}
+
+// ===== CONSTANTS =====
+const moodScoreMap: Record<string, number> = {
+  hopeful: 90, neutral: 60, calm: 75, anxious: 35, stressed: 25, sad: 20, overwhelmed: 15
+};
+
+const moodEmojiMap: Record<string, string> = {
+  hopeful: '🌤️', neutral: '😐', calm: '😌', anxious: '😰', stressed: '😤', sad: '😢', overwhelmed: '🤯'
+};
+
+const sentimentColorMap: Record<string, string> = {
+  neutral: 'bg-slate-100 text-slate-700',
+  anxious: 'bg-amber-50 text-amber-700',
+  stressed: 'bg-rose-50 text-rose-700',
+  sad: 'bg-violet-50 text-violet-700',
+  overwhelmed: 'bg-rose-50 text-rose-700',
+  hopeful: 'bg-emerald-50 text-emerald-700'
+};
+
+const toneColorMap: Record<string, string> = {
+  calm: 'bg-emerald-50 text-emerald-700',
+  strained: 'bg-amber-50 text-amber-700',
+  flat: 'bg-slate-100 text-slate-700',
+  tired: 'bg-amber-50 text-amber-700',
+  tense: 'bg-rose-50 text-rose-700',
+  energetic: 'bg-emerald-50 text-emerald-700'
+};
+
+const faceColorMap: Record<string, string> = {
+  relaxed: 'bg-emerald-50 text-emerald-700',
+  tense: 'bg-rose-50 text-rose-700',
+  sad: 'bg-violet-50 text-violet-700',
+  blank: 'bg-slate-100 text-slate-700',
+  worried: 'bg-amber-50 text-amber-700',
+  engaged: 'bg-emerald-50 text-emerald-700'
+};
+
+const QUICK_REPLIES = [
+  { text: "I'm fine, just tired", icon: '😐' },
+  { text: "Physics is really stressing me out", icon: '⚛️' },
+  { text: "Mock tests didn't go well again", icon: '📝' },
+  { text: "I don't know if I can do this", icon: '😔' },
+  { text: "I studied all day but feel worse", icon: '📚' },
+];
 
 export default function MindMirrorPage() {
   // ===== STATE =====
@@ -102,6 +161,9 @@ export default function MindMirrorPage() {
     }
   }, [inputText]);
 
+  // ===== HELPERS =====
+  const getTime = () => new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
+
   // ===== SAVE TO JOURNAL =====
   const saveToJournal = useCallback((currentMessages: Message[]) => {
     try {
@@ -126,12 +188,8 @@ export default function MindMirrorPage() {
 
   // ===== SEND MESSAGE =====
   const sendMessage = async (overrideText?: string) => {
-    const rawText = (overrideText || inputText).trim();
-    if (!rawText || isLoading) return;
-
-    // Sanitize input before processing
-    const text = sanitizeInput(rawText);
-    if (!text) return;
+    const text = (overrideText || inputText).trim();
+    if (!text || isLoading) return;
 
     setIsLoading(true);
     setInputText('');
@@ -141,12 +199,16 @@ export default function MindMirrorPage() {
       textareaRef.current.style.height = 'auto';
     }
 
-    // Client-side analysis using utility functions
-    const isClientCrisis = detectCrisisKeywords(text);
-    const clientTriggers = detectTriggers(text);
-    const isNegativeText = hasNegativeSentiment(text);
+    // ===== CLIENT-SIDE CRISIS DETECTION =====
+    const isClientCrisis = detectCrisis(text);
 
-    const userMsg: Message = { id: `u-${Date.now()}`, role: 'user', text, time: getFormattedTime() };
+    // ===== CLIENT-SIDE TRIGGER DETECTION =====
+    const clientTriggers = detectTriggers(text);
+
+    // ===== CLIENT-SIDE SENTIMENT HINT =====
+    const isNegativeText = isNegative(text);
+
+    const userMsg: Message = { id: `u-${Date.now()}`, role: 'user', text, time: getTime() };
     const newMessages = [...messages, userMsg];
     setMessages(newMessages);
 
@@ -186,7 +248,7 @@ export default function MindMirrorPage() {
         id: `a-${Date.now()}`,
         role: 'ai',
         text: reply || "I'm here. Could you tell me more?",
-        time: getFormattedTime(),
+        time: getTime(),
         meta
       };
       const messagesAfterAI = [...newMessages, aiMsg];
@@ -197,7 +259,7 @@ export default function MindMirrorPage() {
           id: `c-${Date.now()}`,
           role: 'ai',
           text: "I want to make sure you're okay. If things feel really heavy right now, please reach out:\n\n📞 **iCall**: 9152987821\n📞 **Vandrevala Foundation**: 1860-2662-345\n\nThey're trained to listen, and you deserve support beyond what I can offer.",
-          time: getFormattedTime(),
+          time: getTime(),
           isCrisis: true
         };
         messagesAfterAI.push(crisisMsg);
@@ -214,21 +276,17 @@ export default function MindMirrorPage() {
         if (meta.textSentiment) setTextSentiment(meta.textSentiment);
         // Note: voiceTone and faceSignal now come from real sensors (useSensorAnalysis)
         // We still log LLM's interpretation for debugging but don't override real sensor data
-        
+
         // Merge triggers from LLM with client-side triggers
         if (meta.triggers && Object.keys(meta.triggers).length > 0) {
-          setTriggers(prev => {
-            const merged = { ...prev, ...meta.triggers };
-            const sorted = Object.entries(merged).sort(([, a], [, b]) => b - a).slice(0, 8);
-            return Object.fromEntries(sorted);
-          });
+          setTriggers(prev => mergeTriggers(prev, meta.triggers));
         }
-        
+
         // Use LLM burnout if higher than current, or increment client-side
         if (typeof meta.burnout === 'number') {
           setBurnout(prev => Math.max(prev, meta.burnout));
         }
-        
+
         // Add mood score to history
         if (meta.textSentiment) {
           const score = MOOD_SCORE_MAP[meta.textSentiment] ?? 50;
@@ -237,7 +295,7 @@ export default function MindMirrorPage() {
             return next;
           });
         }
-        
+
         // Show insight from LLM or generate client-side insight
         if (meta.insight) {
           setInsight(meta.insight);
@@ -257,14 +315,14 @@ export default function MindMirrorPage() {
             }
           }
         }
-        
+
         if (meta.contradictionDetected) {
           setContradiction({
             detected: true,
             type: meta.contradictionType || 'verbal-vs-facial',
             question: meta.adaptiveQuestion || ''
           });
-        } else if (isNegativeText && text.toLowerCase().includes('fine')) {
+        } else if (detectClientContradiction(text)) {
           // Client-side contradiction: "fine" + negative context
           setContradiction({
             detected: true,
@@ -290,7 +348,7 @@ export default function MindMirrorPage() {
       }
     } catch (err) {
       setMessages(prev => prev.filter(m => m.id !== 'thinking').concat({
-        id: `e-${Date.now()}`, role: 'ai', text: "I had trouble connecting. Please try again.", time: getFormattedTime()
+        id: `e-${Date.now()}`, role: 'ai', text: "I had trouble connecting. Please try again.", time: getTime()
       }));
       console.error('API error:', err);
     }
@@ -363,7 +421,7 @@ export default function MindMirrorPage() {
       const m = moodHistory[0];
       const px = padX + chartW / 2;
       const py = padY + chartH - (m.score / 100) * chartH;
-      const moodLabel = Object.entries(MOOD_SCORE_MAP).find(([, v]) => v === m.score)?.[0] || '';
+      const moodLabel = Object.entries(moodScoreMap).find(([, v]) => v === m.score)?.[0] || '';
 
       return (
         <svg viewBox={`0 0 ${w} ${h}`} className="w-full" aria-label="Mood trend chart">
@@ -428,8 +486,8 @@ export default function MindMirrorPage() {
         <div className="flex items-center gap-3">
           <div className="w-8 h-8 bg-gradient-to-br from-violet-500 to-purple-700 rounded-lg flex items-center justify-center shadow-lg shadow-violet-200">
             <svg viewBox="0 0 24 24" className="w-4 h-4" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M12 2a7 7 0 0 1 7 7c0 3-1.5 5.5-4 6.8V18H9v-2.2C6.5 14.5 5 12 5 9a7 7 0 0 1 7-7z"/>
-              <path d="M9 21h6M10 18v3M14 18v3"/>
+              <path d="M12 2a7 7 0 0 1 7 7c0 3-1.5 5.5-4 6.8V18H9v-2.2C6.5 14.5 5 12 5 9a7 7 0 0 1 7-7z" />
+              <path d="M9 21h6M10 18v3M14 18v3" />
             </svg>
           </div>
           <div>
@@ -525,15 +583,14 @@ export default function MindMirrorPage() {
                 )}
                 <div className={`max-w-[80%] md:max-w-[70%]`}>
                   <div
-                    className={`px-4 py-2.5 text-sm leading-relaxed rounded-2xl ${
-                      msg.id === 'thinking'
+                    className={`px-4 py-2.5 text-sm leading-relaxed rounded-2xl ${msg.id === 'thinking'
                         ? 'bg-slate-100 text-slate-400 italic rounded-bl-md'
                         : msg.role === 'ai'
                           ? msg.isCrisis
                             ? 'bg-rose-50 border-l-[3px] border-rose-400 text-rose-900 rounded-bl-md'
                             : 'bg-slate-100 text-slate-800 rounded-bl-md'
                           : 'bg-violet-600 text-white rounded-br-md'
-                    }`}
+                      }`}
                     role={msg.isCrisis ? 'alert' : undefined}
                     aria-label={msg.role === 'ai' ? 'MindMirror says' : 'You said'}
                   >
@@ -547,7 +604,7 @@ export default function MindMirrorPage() {
                         <span>MindMirror is reflecting…</span>
                       </div>
                     ) : (
-                      <span dangerouslySetInnerHTML={{ __html: formatMessageText(msg.text) }} />
+                      <span dangerouslySetInnerHTML={{ __html: formatText(msg.text) }} />
                     )}
                   </div>
                   {msg.time && (
@@ -604,8 +661,8 @@ export default function MindMirrorPage() {
                 aria-label="Send message"
               >
                 <svg viewBox="0 0 24 24" className="w-4 h-4" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <line x1="22" y1="2" x2="11" y2="13"/>
-                  <polygon points="22 2 15 22 11 13 2 9 22 2"/>
+                  <line x1="22" y1="2" x2="11" y2="13" />
+                  <polygon points="22 2 15 22 11 13 2 9 22 2" />
                 </svg>
               </button>
             </div>
@@ -640,14 +697,14 @@ export default function MindMirrorPage() {
                   <div className="flex items-center gap-3">
                     <div className="w-8 h-8 rounded-lg bg-violet-50 flex items-center justify-center shrink-0">
                       <svg viewBox="0 0 24 24" className="w-4 h-4 text-violet-500" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+                        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
                       </svg>
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className="text-[11px] text-slate-400">Text tone</div>
                     </div>
-                    <span className={`text-[11px] px-2.5 py-0.5 rounded-full font-medium ${SENTIMENT_COLOR_MAP[textSentiment] || 'bg-slate-100 text-slate-700'}`}>
-                      {MOOD_EMOJI_MAP[textSentiment] || '😐'} {textSentiment.charAt(0).toUpperCase() + textSentiment.slice(1)}
+                    <span className={`text-[11px] px-2.5 py-0.5 rounded-full font-medium ${sentimentColorMap[textSentiment] || 'bg-slate-100 text-slate-700'}`}>
+                      {moodEmojiMap[textSentiment] || '😐'} {textSentiment.charAt(0).toUpperCase() + textSentiment.slice(1)}
                     </span>
                   </div>
 
@@ -655,8 +712,8 @@ export default function MindMirrorPage() {
                   <div className="flex items-center gap-3">
                     <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${sensor.micActive ? 'bg-emerald-50' : 'bg-slate-100'}`}>
                       <svg viewBox="0 0 24 24" className={`w-4 h-4 ${sensor.micActive ? 'text-emerald-500' : 'text-slate-400'}`} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
-                        <path d="M19 10v2a7 7 0 0 1-14 0v-2M12 19v4M8 23h8"/>
+                        <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
+                        <path d="M19 10v2a7 7 0 0 1-14 0v-2M12 19v4M8 23h8" />
                       </svg>
                     </div>
                     <div className="flex-1 min-w-0">
@@ -668,11 +725,10 @@ export default function MindMirrorPage() {
                       )}
                     </div>
                     <button
-                      className={`text-[10px] px-2 py-0.5 rounded-full font-medium border transition-all ${
-                        sensor.micActive
+                      className={`text-[10px] px-2 py-0.5 rounded-full font-medium border transition-all ${sensor.micActive
                           ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
                           : 'bg-slate-50 text-slate-500 border-slate-200 hover:border-emerald-300'
-                      }`}
+                        }`}
                       onClick={sensor.micActive ? sensor.stopMic : sensor.startMic}
                       aria-label={sensor.micActive ? 'Stop microphone' : 'Start microphone'}
                     >
@@ -680,7 +736,7 @@ export default function MindMirrorPage() {
                     </button>
                   </div>
                   <div className="flex items-center gap-3 ml-11">
-                    <span className={`text-[11px] px-2.5 py-0.5 rounded-full font-medium ${TONE_COLOR_MAP[voiceTone] || 'bg-slate-100 text-slate-700'}`}>
+                    <span className={`text-[11px] px-2.5 py-0.5 rounded-full font-medium ${toneColorMap[voiceTone] || 'bg-slate-100 text-slate-700'}`}>
                       {voiceTone === 'calm' ? '😌' : voiceTone === 'tense' ? '😰' : voiceTone === 'tired' ? '😴' : '🎙️'} {voiceTone.charAt(0).toUpperCase() + voiceTone.slice(1)}
                     </span>
                     {sensor.micError && <span className="text-[10px] text-rose-500">{sensor.micError}</span>}
@@ -690,19 +746,18 @@ export default function MindMirrorPage() {
                   <div className="flex items-center gap-3">
                     <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${sensor.cameraActive ? 'bg-amber-50' : 'bg-slate-100'}`}>
                       <svg viewBox="0 0 24 24" className={`w-4 h-4 ${sensor.cameraActive ? 'text-amber-500' : 'text-slate-400'}`} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <circle cx="12" cy="12" r="10"/>
-                        <path d="M8 14s1.5 2 4 2 4-2 4-2M9 9h.01M15 9h.01"/>
+                        <circle cx="12" cy="12" r="10" />
+                        <path d="M8 14s1.5 2 4 2 4-2 4-2M9 9h.01M15 9h.01" />
                       </svg>
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className="text-[11px] text-slate-400">Facial signal {sensor.cameraActive && <span className="text-amber-500">(LIVE)</span>}</div>
                     </div>
                     <button
-                      className={`text-[10px] px-2 py-0.5 rounded-full font-medium border transition-all ${
-                        sensor.cameraActive
+                      className={`text-[10px] px-2 py-0.5 rounded-full font-medium border transition-all ${sensor.cameraActive
                           ? 'bg-amber-50 text-amber-700 border-amber-200'
                           : 'bg-slate-50 text-slate-500 border-slate-200 hover:border-amber-300'
-                      }`}
+                        }`}
                       onClick={sensor.cameraActive ? sensor.stopCamera : sensor.startCamera}
                       aria-label={sensor.cameraActive ? 'Stop camera' : 'Start camera'}
                     >
@@ -846,9 +901,9 @@ export default function MindMirrorPage() {
                   >
                     <div className="flex items-center gap-1.5 mb-2">
                       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#7c3aed" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                        <circle cx="12" cy="12" r="10"/>
-                        <line x1="12" y1="8" x2="12" y2="12"/>
-                        <line x1="12" y1="16" x2="12.01" y2="16"/>
+                        <circle cx="12" cy="12" r="10" />
+                        <line x1="12" y1="8" x2="12" y2="12" />
+                        <line x1="12" y1="16" x2="12.01" y2="16" />
                       </svg>
                       <span className="text-[11px] font-bold text-violet-700 uppercase tracking-wide">Pattern Found</span>
                     </div>
@@ -889,20 +944,19 @@ export default function MindMirrorPage() {
                   <div className="flex items-center justify-between mb-2">
                     <div className="text-xs text-slate-400">{e.date}</div>
                     {e.mood && (
-                      <span className={`text-[11px] px-2 py-0.5 rounded-full font-medium ${SENTIMENT_COLOR_MAP[e.mood] || 'bg-slate-100 text-slate-700'}`}>
-                        {MOOD_EMOJI_MAP[e.mood] || '😐'} {e.mood}
+                      <span className={`text-[11px] px-2 py-0.5 rounded-full font-medium ${sentimentColorMap[e.mood] || 'bg-slate-100 text-slate-700'}`}>
+                        {moodEmojiMap[e.mood] || '😐'} {e.mood}
                       </span>
                     )}
                   </div>
                   <div className="text-sm text-slate-700 leading-relaxed line-clamp-3">{e.summary}</div>
                   <div className="flex gap-1.5 mt-3 flex-wrap">
                     {e.tags.map(t => (
-                      <span key={t} className={`text-[11px] px-2 py-0.5 rounded-full font-medium ${
-                        t === 'stress' || t === 'self-doubt' ? 'bg-rose-50 text-rose-700' :
-                        t === 'burnout' ? 'bg-amber-50 text-amber-700' :
-                        t === 'anxiety' ? 'bg-amber-50 text-amber-700' :
-                        'bg-violet-50 text-violet-700'
-                      }`}>{t}</span>
+                      <span key={t} className={`text-[11px] px-2 py-0.5 rounded-full font-medium ${t === 'stress' || t === 'self-doubt' ? 'bg-rose-50 text-rose-700' :
+                          t === 'burnout' ? 'bg-amber-50 text-amber-700' :
+                            t === 'anxiety' ? 'bg-amber-50 text-amber-700' :
+                              'bg-violet-50 text-violet-700'
+                        }`}>{t}</span>
                     ))}
                   </div>
                 </article>
@@ -941,9 +995,9 @@ export default function MindMirrorPage() {
                     </div>
                     <div className="text-xs text-slate-400 mt-0.5">{
                       key === 'camera' ? 'Detects facial expressions using face-api.js. Camera feed stays on-device — never recorded or transmitted.'
-                      : key === 'voice' ? 'Analyzes tone and energy via Web Audio API. Raw audio is discarded immediately after analysis.'
-                      : key === 'journal' ? 'Stores session transcripts locally for pattern discovery.'
-                      : 'Show iCall / Vandrevala helpline when severe distress is detected.'
+                        : key === 'voice' ? 'Analyzes tone and energy via Web Audio API. Raw audio is discarded immediately after analysis.'
+                          : key === 'journal' ? 'Stores session transcripts locally for pattern discovery.'
+                            : 'Show iCall / Vandrevala helpline when severe distress is detected.'
                     }</div>
                   </div>
                   <label className="relative inline-flex items-center cursor-pointer" aria-label={`Enable ${key}`}>
