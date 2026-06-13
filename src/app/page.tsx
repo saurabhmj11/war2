@@ -3,82 +3,33 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useSensorAnalysis } from './useSensorAnalysis';
-
-// ===== TYPES =====
-interface Meta {
-  textSentiment?: string;
-  voiceTone?: string;
-  faceSignal?: string;
-  triggers?: Record<string, number>;
-  burnout?: number;
-  confidence?: number;
-  contradictionDetected?: boolean;
-  contradictionType?: string;
-  adaptiveQuestion?: string;
-  insight?: string;
-  crisisFlag?: boolean;
-}
-
-interface Message {
-  id: string;
-  role: 'user' | 'ai';
-  text: string;
-  time: string;
-  isCrisis?: boolean;
-  meta?: Meta;
-}
-
-interface JournalEntry {
-  id: number;
-  date: string;
-  summary: string;
-  tags: string[];
-  mood?: string;
-}
-
-// ===== CONSTANTS =====
-const moodScoreMap: Record<string, number> = {
-  hopeful: 90, neutral: 60, calm: 75, anxious: 35, stressed: 25, sad: 20, overwhelmed: 15
-};
-
-const moodEmojiMap: Record<string, string> = {
-  hopeful: '🌤️', neutral: '😐', calm: '😌', anxious: '😰', stressed: '😤', sad: '😢', overwhelmed: '🤯'
-};
-
-const sentimentColorMap: Record<string, string> = {
-  neutral: 'bg-slate-100 text-slate-700',
-  anxious: 'bg-amber-50 text-amber-700',
-  stressed: 'bg-rose-50 text-rose-700',
-  sad: 'bg-violet-50 text-violet-700',
-  overwhelmed: 'bg-rose-50 text-rose-700',
-  hopeful: 'bg-emerald-50 text-emerald-700'
-};
-
-const toneColorMap: Record<string, string> = {
-  calm: 'bg-emerald-50 text-emerald-700',
-  strained: 'bg-amber-50 text-amber-700',
-  flat: 'bg-slate-100 text-slate-700',
-  tired: 'bg-amber-50 text-amber-700',
-  tense: 'bg-rose-50 text-rose-700',
-  energetic: 'bg-emerald-50 text-emerald-700'
-};
-
-const faceColorMap: Record<string, string> = {
-  relaxed: 'bg-emerald-50 text-emerald-700',
-  tense: 'bg-rose-50 text-rose-700',
-  sad: 'bg-violet-50 text-violet-700',
-  blank: 'bg-slate-100 text-slate-700',
-  worried: 'bg-amber-50 text-amber-700',
-  engaged: 'bg-emerald-50 text-emerald-700'
-};
-
-const QUICK_REPLIES = [
-  { text: "I'm fine, just tired", icon: '😐' },
-  { text: "Physics is really stressing me out", icon: '⚛️' },
-  { text: "Mock tests didn't go well again", icon: '📝' },
-  { text: "I don't know if I can do this", icon: '😔' },
-  { text: "I studied all day but feel worse", icon: '📚' },
-];
+import {
+  type Meta,
+  type Message,
+  type JournalEntry,
+  type MoodDataPoint,
+  MOOD_SCORE_MAP,
+  MOOD_EMOJI_MAP,
+  SENTIMENT_COLOR_MAP,
+  TONE_COLOR_MAP,
+  FACE_COLOR_MAP,
+  QUICK_REPLIES,
+  CRISIS_KEYWORDS,
+} from './lib/constants';
+import {
+  extractTags,
+  detectCrisisKeywords,
+  detectTriggers,
+  hasNegativeSentiment,
+  calculateBurnoutIncrement,
+  getFormattedTime,
+  formatMessageText,
+  mergeTriggers,
+  sanitizeInput,
+  getBurnoutDisplay,
+  generateClientInsight,
+  renderMoodChartSVG,
+} from './lib/utils';
 
 export default function MindMirrorPage() {
   // ===== STATE =====
@@ -151,20 +102,6 @@ export default function MindMirrorPage() {
     }
   }, [inputText]);
 
-  // ===== HELPERS =====
-  const getTime = () => new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
-
-  const extractTags = (text: string): string[] => {
-    const subjects = ['Physics', 'Chemistry', 'Math', 'Maths', 'Biology', 'English', 'History', 'Geography', 'Economics', 'UPSC', 'JEE', 'NEET', 'CAT', 'GATE'];
-    const tags: string[] = [];
-    subjects.forEach(s => { if (text.toLowerCase().includes(s.toLowerCase())) tags.push(s); });
-    if (/stress|stressed|pressure/i.test(text)) tags.push('stress');
-    if (/tired|exhaust|burnout/i.test(text)) tags.push('burnout');
-    if (/can't|cannot|give up/i.test(text)) tags.push('self-doubt');
-    if (/anxious|worry|nervous/i.test(text)) tags.push('anxiety');
-    return tags.slice(0, 4);
-  };
-
   // ===== SAVE TO JOURNAL =====
   const saveToJournal = useCallback((currentMessages: Message[]) => {
     try {
@@ -187,17 +124,14 @@ export default function MindMirrorPage() {
     } catch { /* ignore */ }
   }, [textSentiment, journalEntries]);
 
-  // ===== FORMAT TEXT WITH MARKDOWN-LIKE BOLD =====
-  const formatText = (text: string) => {
-    return text
-      .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-      .replace(/\n/g, '<br>');
-  };
-
   // ===== SEND MESSAGE =====
   const sendMessage = async (overrideText?: string) => {
-    const text = (overrideText || inputText).trim();
-    if (!text || isLoading) return;
+    const rawText = (overrideText || inputText).trim();
+    if (!rawText || isLoading) return;
+
+    // Sanitize input before processing
+    const text = sanitizeInput(rawText);
+    if (!text) return;
 
     setIsLoading(true);
     setInputText('');
@@ -207,33 +141,12 @@ export default function MindMirrorPage() {
       textareaRef.current.style.height = 'auto';
     }
 
-    // ===== CLIENT-SIDE CRISIS DETECTION =====
-    const CRISIS_KEYWORDS = ['give up on everything', 'end it all', 'no point living', 'suicide', 'kill myself', 'don\'t want to live', 'want to die', 'end my life', 'can\'t go on', 'better off dead'];
-    const isClientCrisis = CRISIS_KEYWORDS.some(kw => text.toLowerCase().includes(kw));
+    // Client-side analysis using utility functions
+    const isClientCrisis = detectCrisisKeywords(text);
+    const clientTriggers = detectTriggers(text);
+    const isNegativeText = hasNegativeSentiment(text);
 
-    // ===== CLIENT-SIDE TRIGGER DETECTION =====
-    const subjectKeywords: Record<string, string[]> = {
-      'Physics': ['physics', 'mechanics', 'thermodynamics', 'electro'],
-      'Chemistry': ['chemistry', 'organic', 'inorganic', 'reactions'],
-      'Math': ['math', 'maths', 'calculus', 'algebra', 'trigonometry'],
-      'Biology': ['biology', 'botany', 'zoology'],
-      'Parents': ['parents', 'mom', 'dad', 'family pressure', 'family expects'],
-      'Sleep': ['sleep', 'insomnia', 'can\'t sleep', 'tired', 'exhausted'],
-      'Time': ['time', 'running out of time', 'deadline', 'not enough time'],
-      'Mock Tests': ['mock test', 'mock exam', 'practice test', 'test score'],
-    };
-    const clientTriggers: Record<string, number> = {};
-    for (const [subject, keywords] of Object.entries(subjectKeywords)) {
-      if (keywords.some(kw => text.toLowerCase().includes(kw))) {
-        clientTriggers[subject] = 65;
-      }
-    }
-
-    // ===== CLIENT-SIDE SENTIMENT HINT =====
-    const negativeWords = ['stressed', 'anxious', 'worried', 'scared', 'overwhelmed', 'can\'t', 'hate', 'terrible', 'awful', 'impossible', 'hopeless', 'give up', 'burnout', 'exhausted'];
-    const isNegativeText = negativeWords.some(w => text.toLowerCase().includes(w));
-
-    const userMsg: Message = { id: `u-${Date.now()}`, role: 'user', text, time: getTime() };
+    const userMsg: Message = { id: `u-${Date.now()}`, role: 'user', text, time: getFormattedTime() };
     const newMessages = [...messages, userMsg];
     setMessages(newMessages);
 
@@ -245,14 +158,7 @@ export default function MindMirrorPage() {
 
     // Immediately apply client-side triggers to panel
     if (Object.keys(clientTriggers).length > 0) {
-      setTriggers(prev => {
-        const merged = { ...prev };
-        for (const [key, val] of Object.entries(clientTriggers)) {
-          merged[key] = Math.max(merged[key] || 0, val);
-        }
-        const sorted = Object.entries(merged).sort(([, a], [, b]) => b - a).slice(0, 8);
-        return Object.fromEntries(sorted);
-      });
+      setTriggers(prev => mergeTriggers(prev, clientTriggers));
     }
 
     // Immediately increment burnout slightly for negative messages
@@ -280,7 +186,7 @@ export default function MindMirrorPage() {
         id: `a-${Date.now()}`,
         role: 'ai',
         text: reply || "I'm here. Could you tell me more?",
-        time: getTime(),
+        time: getFormattedTime(),
         meta
       };
       const messagesAfterAI = [...newMessages, aiMsg];
@@ -291,7 +197,7 @@ export default function MindMirrorPage() {
           id: `c-${Date.now()}`,
           role: 'ai',
           text: "I want to make sure you're okay. If things feel really heavy right now, please reach out:\n\n📞 **iCall**: 9152987821\n📞 **Vandrevala Foundation**: 1860-2662-345\n\nThey're trained to listen, and you deserve support beyond what I can offer.",
-          time: getTime(),
+          time: getFormattedTime(),
           isCrisis: true
         };
         messagesAfterAI.push(crisisMsg);
@@ -325,7 +231,7 @@ export default function MindMirrorPage() {
         
         // Add mood score to history
         if (meta.textSentiment) {
-          const score = moodScoreMap[meta.textSentiment] ?? 50;
+          const score = MOOD_SCORE_MAP[meta.textSentiment] ?? 50;
           setMoodHistory(prev => {
             const next = [...prev, { label: `#${prev.length + 1}`, score }].slice(-10);
             return next;
@@ -384,7 +290,7 @@ export default function MindMirrorPage() {
       }
     } catch (err) {
       setMessages(prev => prev.filter(m => m.id !== 'thinking').concat({
-        id: `e-${Date.now()}`, role: 'ai', text: "I had trouble connecting. Please try again.", time: getTime()
+        id: `e-${Date.now()}`, role: 'ai', text: "I had trouble connecting. Please try again.", time: getFormattedTime()
       }));
       console.error('API error:', err);
     }
@@ -457,7 +363,7 @@ export default function MindMirrorPage() {
       const m = moodHistory[0];
       const px = padX + chartW / 2;
       const py = padY + chartH - (m.score / 100) * chartH;
-      const moodLabel = Object.entries(moodScoreMap).find(([, v]) => v === m.score)?.[0] || '';
+      const moodLabel = Object.entries(MOOD_SCORE_MAP).find(([, v]) => v === m.score)?.[0] || '';
 
       return (
         <svg viewBox={`0 0 ${w} ${h}`} className="w-full" aria-label="Mood trend chart">
@@ -641,7 +547,7 @@ export default function MindMirrorPage() {
                         <span>MindMirror is reflecting…</span>
                       </div>
                     ) : (
-                      <span dangerouslySetInnerHTML={{ __html: formatText(msg.text) }} />
+                      <span dangerouslySetInnerHTML={{ __html: formatMessageText(msg.text) }} />
                     )}
                   </div>
                   {msg.time && (
@@ -740,8 +646,8 @@ export default function MindMirrorPage() {
                     <div className="flex-1 min-w-0">
                       <div className="text-[11px] text-slate-400">Text tone</div>
                     </div>
-                    <span className={`text-[11px] px-2.5 py-0.5 rounded-full font-medium ${sentimentColorMap[textSentiment] || 'bg-slate-100 text-slate-700'}`}>
-                      {moodEmojiMap[textSentiment] || '😐'} {textSentiment.charAt(0).toUpperCase() + textSentiment.slice(1)}
+                    <span className={`text-[11px] px-2.5 py-0.5 rounded-full font-medium ${SENTIMENT_COLOR_MAP[textSentiment] || 'bg-slate-100 text-slate-700'}`}>
+                      {MOOD_EMOJI_MAP[textSentiment] || '😐'} {textSentiment.charAt(0).toUpperCase() + textSentiment.slice(1)}
                     </span>
                   </div>
 
@@ -774,7 +680,7 @@ export default function MindMirrorPage() {
                     </button>
                   </div>
                   <div className="flex items-center gap-3 ml-11">
-                    <span className={`text-[11px] px-2.5 py-0.5 rounded-full font-medium ${toneColorMap[voiceTone] || 'bg-slate-100 text-slate-700'}`}>
+                    <span className={`text-[11px] px-2.5 py-0.5 rounded-full font-medium ${TONE_COLOR_MAP[voiceTone] || 'bg-slate-100 text-slate-700'}`}>
                       {voiceTone === 'calm' ? '😌' : voiceTone === 'tense' ? '😰' : voiceTone === 'tired' ? '😴' : '🎙️'} {voiceTone.charAt(0).toUpperCase() + voiceTone.slice(1)}
                     </span>
                     {sensor.micError && <span className="text-[10px] text-rose-500">{sensor.micError}</span>}
@@ -983,8 +889,8 @@ export default function MindMirrorPage() {
                   <div className="flex items-center justify-between mb-2">
                     <div className="text-xs text-slate-400">{e.date}</div>
                     {e.mood && (
-                      <span className={`text-[11px] px-2 py-0.5 rounded-full font-medium ${sentimentColorMap[e.mood] || 'bg-slate-100 text-slate-700'}`}>
-                        {moodEmojiMap[e.mood] || '😐'} {e.mood}
+                      <span className={`text-[11px] px-2 py-0.5 rounded-full font-medium ${SENTIMENT_COLOR_MAP[e.mood] || 'bg-slate-100 text-slate-700'}`}>
+                        {MOOD_EMOJI_MAP[e.mood] || '😐'} {e.mood}
                       </span>
                     )}
                   </div>
