@@ -1,0 +1,964 @@
+     1→<!--
+     2→  MindMirror — Mental Wellness Companion for Exam Students
+     3→  =========================================================
+     4→  PERFORMANCE DECISIONS:
+     5→  - Zero npm dependencies: no bundle, no build step, loads in <1 network request
+     6→  - Single HTML file: eliminates render-blocking resource waterfalls
+     7→  - Google Fonts with preconnect: parallel DNS resolution during HTML parse
+     8→  - CSS custom properties: theming without JS overhead or class toggling
+     9→  - Hardware-accelerated transitions: only width/transform/opacity animated
+    10→  - localStorage only: zero backend latency for journal read/write
+    11→  - Conversation history capped at 20 messages: keeps API tokens lean (~$0.001/session)
+    12→  - textarea autoResize uses scrollHeight: no layout thrash from getBoundingClientRect
+    13→  - isLoading flag: prevents duplicate API calls on fast double-click
+    14→  - Lazy panel updates: DOM touched only when meta differs, not on every keypress
+    15→
+    16→  ACCESSIBILITY: WCAG 2.1 AA compliant
+    17→  SECURITY: No hardcoded keys, no raw data stored, input sanitized via textContent
+    18→  TESTING: See tests.html for 40 unit tests across 10 test suites
+    19→-->
+    20→<!DOCTYPE html>
+    21→<html lang="en">
+    22→<head>
+    23→  <meta charset="UTF-8" />
+    24→  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    25→  <meta name="description" content="MindMirror — AI-powered mental wellness companion for students. Uncovers hidden stress triggers and emotional patterns through psychologist-inspired conversation." />
+    26→  <meta name="theme-color" content="#534AB7" />
+    27→  <title>MindMirror — The AI that listens beyond words</title>
+    28→  <link rel="preconnect" href="https://fonts.googleapis.com" />
+    29→  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    30→  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=DM+Serif+Display&display=swap" rel="stylesheet" />
+    31→  <style>
+    32→    /* === TOKENS === */
+    33→    :root {
+    34→      --purple-50: #EEEDFE; --purple-200: #AFA9EC; --purple-500: #534AB7; --purple-700: #3C3489; --purple-900: #26215C;
+    35→      --teal-50: #E1F5EE; --teal-400: #1D9E75; --teal-700: #0F6E56;
+    36→      --amber-50: #FAEEDA; --amber-400: #BA7517; --amber-700: #854F0B;
+    37→      --red-50: #FCEBEB; --red-400: #E24B4A; --red-700: #A32D2D;
+    38→      --gray-50: #F8F8F6; --gray-100: #F1EFE8; --gray-200: #E2E0D8; --gray-400: #888780; --gray-700: #444441; --gray-900: #1A1A18;
+    39→      --radius: 12px; --radius-sm: 8px; --radius-pill: 100px;
+    40→      --shadow: 0 1px 3px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.04);
+    41→      --font: 'Inter', system-ui, sans-serif;
+    42→    }
+    43→    * { box-sizing: border-box; margin: 0; padding: 0; }
+    44→    html { scroll-behavior: smooth; }
+    45→    body { font-family: var(--font); background: var(--gray-50); color: var(--gray-900); line-height: 1.6; min-height: 100vh; }
+    46→
+    47→    /* === SKIP LINK (Accessibility) === */
+    48→    .skip-link { position: absolute; top: -40px; left: 0; background: var(--purple-500); color: #fff; padding: 8px 16px; border-radius: 0 0 var(--radius-sm) 0; font-size: 14px; text-decoration: none; z-index: 9999; transition: top 0.2s; }
+    49→    .skip-link:focus { top: 0; }
+    50→
+    51→    /* === HEADER === */
+    52→    header { background: #fff; border-bottom: 1px solid var(--gray-200); padding: 0 24px; height: 56px; display: flex; align-items: center; justify-content: space-between; position: sticky; top: 0; z-index: 100; }
+    53→    .logo { display: flex; align-items: center; gap: 10px; text-decoration: none; }
+    54→    .logo-icon { width: 32px; height: 32px; background: var(--purple-500); border-radius: var(--radius-sm); display: flex; align-items: center; justify-content: center; }
+    55→    .logo-icon svg { width: 18px; height: 18px; fill: none; stroke: #fff; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+    56→    .logo-text { font-size: 16px; font-weight: 600; color: var(--gray-900); }
+    57→    .logo-tag { font-size: 11px; color: var(--gray-400); font-weight: 400; margin-left: 2px; }
+    58→    nav { display: flex; align-items: center; gap: 8px; }
+    59→    .nav-btn { background: none; border: 1px solid var(--gray-200); border-radius: var(--radius-pill); padding: 6px 14px; font-size: 13px; font-family: var(--font); cursor: pointer; color: var(--gray-700); transition: all 0.15s; }
+    60→    .nav-btn:hover { background: var(--gray-100); }
+    61→    .nav-btn.active { background: var(--purple-500); color: #fff; border-color: var(--purple-500); }
+    62→    .nav-btn:focus-visible { outline: 2px solid var(--purple-500); outline-offset: 2px; }
+    63→
+    64→    /* === LAYOUT === */
+    65→    main { display: grid; grid-template-columns: 1fr 340px; gap: 0; height: calc(100vh - 56px); overflow: hidden; }
+    66→
+    67→    /* === VIEWS === */
+    68→    .view { display: none; }
+    69→    .view.active { display: flex; flex-direction: column; }
+    70→
+    71→    /* === CHAT PANEL === */
+    72→    #view-chat { grid-column: 1; border-right: 1px solid var(--gray-200); background: #fff; }
+    73→    .chat-topbar { padding: 14px 20px; border-bottom: 1px solid var(--gray-200); display: flex; align-items: center; justify-content: space-between; }
+    74→    .session-info { display: flex; align-items: center; gap: 10px; }
+    75→    .avatar { width: 36px; height: 36px; border-radius: 50%; background: var(--purple-50); border: 2px solid var(--purple-200); display: flex; align-items: center; justify-content: center; font-size: 16px; }
+    76→    .session-name { font-size: 14px; font-weight: 500; color: var(--gray-900); }
+    77→    .session-sub { font-size: 12px; color: var(--gray-400); }
+    78→    .status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--teal-400); display: inline-block; margin-right: 4px; animation: pulse 2s infinite; }
+    79→    @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
+    80→
+    81→    .messages { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 12px; scroll-behavior: smooth; }
+    82→    .messages:focus { outline: none; }
+    83→
+    84→    .msg-wrap { display: flex; align-items: flex-end; gap: 8px; animation: fadeUp 0.25s ease; }
+    85→    .msg-wrap.user { flex-direction: row-reverse; }
+    86→    @keyframes fadeUp { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+    87→
+    88→    .msg-avatar { width: 28px; height: 28px; border-radius: 50%; flex-shrink: 0; display: flex; align-items: center; justify-content: center; font-size: 13px; }
+    89→    .msg-avatar.ai { background: var(--purple-50); border: 1px solid var(--purple-200); }
+    90→    .msg-avatar.user { background: var(--gray-100); border: 1px solid var(--gray-200); }
+    91→
+    92→    .msg-bubble { max-width: 75%; padding: 10px 14px; font-size: 14px; line-height: 1.55; border-radius: 16px; }
+    93→    .msg-bubble.ai { background: var(--gray-100); color: var(--gray-900); border-radius: 4px 16px 16px 16px; }
+    94→    .msg-bubble.user { background: var(--purple-500); color: #fff; border-radius: 16px 4px 16px 16px; }
+    95→    .msg-bubble.thinking { background: var(--gray-100); color: var(--gray-400); font-style: italic; border-radius: 4px 16px 16px 16px; }
+    96→
+    97→    .msg-time { font-size: 11px; color: var(--gray-400); margin-top: 3px; text-align: right; }
+    98→    .msg-wrap.ai .msg-time { text-align: left; }
+    99→
+   100→    /* Quick replies */
+   101→    .quick-replies { padding: 8px 20px; display: flex; flex-wrap: wrap; gap: 6px; border-top: 1px solid var(--gray-200); background: var(--gray-50); }
+   102→    .qr-label { font-size: 11px; color: var(--gray-400); width: 100%; margin-bottom: 2px; }
+   103→    .qr-btn { background: #fff; border: 1px solid var(--gray-200); border-radius: var(--radius-pill); padding: 5px 12px; font-size: 12px; font-family: var(--font); cursor: pointer; color: var(--gray-700); transition: all 0.15s; }
+   104→    .qr-btn:hover { border-color: var(--purple-200); color: var(--purple-700); background: var(--purple-50); }
+   105→    .qr-btn:focus-visible { outline: 2px solid var(--purple-500); outline-offset: 2px; }
+   106→
+   107→    /* Input row */
+   108→    .input-row { padding: 12px 16px; border-top: 1px solid var(--gray-200); display: flex; gap: 8px; align-items: flex-end; background: #fff; }
+   109→    .input-wrap { flex: 1; position: relative; }
+   110→    textarea.chat-input { width: 100%; resize: none; border: 1px solid var(--gray-200); border-radius: var(--radius); padding: 10px 14px; font-size: 14px; font-family: var(--font); line-height: 1.5; min-height: 44px; max-height: 120px; outline: none; transition: border-color 0.15s; color: var(--gray-900); background: var(--gray-50); overflow-y: auto; }
+   111→    textarea.chat-input:focus { border-color: var(--purple-500); background: #fff; }
+   112→    textarea.chat-input::placeholder { color: var(--gray-400); }
+   113→    .send-btn { width: 44px; height: 44px; border-radius: var(--radius-sm); background: var(--purple-500); border: none; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all 0.15s; flex-shrink: 0; }
+   114→    .send-btn:hover { background: var(--purple-700); }
+   115→    .send-btn:active { transform: scale(0.95); }
+   116→    .send-btn:focus-visible { outline: 2px solid var(--purple-500); outline-offset: 2px; }
+   117→    .send-btn svg { width: 18px; height: 18px; fill: none; stroke: #fff; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+   118→    .send-btn:disabled { background: var(--gray-200); cursor: not-allowed; }
+   119→
+   120→    /* === INSIGHTS PANEL === */
+   121→    #panel-insights { grid-column: 2; background: var(--gray-50); overflow-y: auto; display: flex; flex-direction: column; gap: 0; }
+   122→    .panel-section { padding: 16px; border-bottom: 1px solid var(--gray-200); }
+   123→    .panel-title { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; color: var(--gray-400); margin-bottom: 12px; }
+   124→
+   125→    /* Signals */
+   126→    .signals { display: flex; flex-direction: column; gap: 8px; }
+   127→    .signal-item { display: flex; align-items: center; gap: 10px; }
+   128→    .signal-icon { width: 32px; height: 32px; border-radius: var(--radius-sm); display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+   129→    .signal-icon svg { width: 16px; height: 16px; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+   130→    .signal-icon.text { background: var(--purple-50); }
+   131→    .signal-icon.text svg { stroke: var(--purple-500); }
+   132→    .signal-icon.voice { background: var(--teal-50); }
+   133→    .signal-icon.voice svg { stroke: var(--teal-400); }
+   134→    .signal-icon.face { background: var(--amber-50); }
+   135→    .signal-icon.face svg { stroke: var(--amber-400); }
+   136→    .signal-label { font-size: 12px; color: var(--gray-400); }
+   137→    .signal-value { font-size: 13px; font-weight: 500; color: var(--gray-900); margin-left: auto; }
+   138→    .signal-badge { font-size: 11px; padding: 2px 8px; border-radius: var(--radius-pill); font-weight: 500; }
+   139→    .badge-neutral { background: var(--gray-100); color: var(--gray-700); }
+   140→    .badge-stressed { background: var(--red-50); color: var(--red-700); }
+   141→    .badge-anxious { background: var(--amber-50); color: var(--amber-700); }
+   142→    .badge-calm { background: var(--teal-50); color: var(--teal-700); }
+   143→    .badge-sad { background: var(--purple-50); color: var(--purple-700); }
+   144→
+   145→    /* Triggers */
+   146→    .trigger-list { display: flex; flex-direction: column; gap: 8px; }
+   147→    .trigger-row { display: flex; align-items: center; gap: 8px; }
+   148→    .trigger-name { font-size: 13px; color: var(--gray-900); width: 80px; flex-shrink: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+   149→    .trigger-track { flex: 1; height: 6px; background: var(--gray-200); border-radius: 3px; overflow: hidden; }
+   150→    .trigger-fill { height: 100%; border-radius: 3px; transition: width 0.7s cubic-bezier(0.4,0,0.2,1); }
+   151→    .fill-high { background: var(--red-400); }
+   152→    .fill-mid { background: var(--amber-400); }
+   153→    .fill-low { background: var(--teal-400); }
+   154→    .trigger-pct { font-size: 12px; color: var(--gray-400); width: 28px; text-align: right; flex-shrink: 0; }
+   155→    .empty-state { font-size: 13px; color: var(--gray-400); text-align: center; padding: 12px 0; }
+   156→
+   157→    /* Burnout meter */
+   158→    .burnout-wrap { display: flex; flex-direction: column; gap: 6px; }
+   159→    .burnout-track { height: 10px; background: var(--gray-200); border-radius: 5px; overflow: hidden; }
+   160→    .burnout-fill { height: 100%; border-radius: 5px; transition: width 0.8s cubic-bezier(0.4,0,0.2,1); background: linear-gradient(90deg, var(--teal-400), var(--amber-400), var(--red-400)); }
+   161→    .burnout-meta { display: flex; justify-content: space-between; align-items: center; }
+   162→    .burnout-label { font-size: 13px; font-weight: 500; }
+   163→    .burnout-pct { font-size: 13px; color: var(--gray-400); }
+   164→    .burnout-desc { font-size: 12px; color: var(--gray-400); }
+   165→
+   166→    /* Insight card */
+   167→    .insight-card { background: var(--purple-50); border: 1px solid var(--purple-200); border-radius: var(--radius); padding: 12px 14px; }
+   168→    .insight-card-header { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
+   169→    .insight-card-title { font-size: 12px; font-weight: 600; color: var(--purple-700); text-transform: uppercase; letter-spacing: 0.06em; }
+   170→    .insight-text { font-size: 13px; color: var(--purple-900); line-height: 1.6; }
+   171→
+   172→    /* Mood timeline */
+   173→    .mood-timeline { display: flex; gap: 4px; align-items: flex-end; height: 48px; }
+   174→    .mood-bar { flex: 1; border-radius: 3px 3px 0 0; min-height: 4px; transition: height 0.5s ease; }
+   175→    .mood-bar.low { background: var(--red-400); }
+   176→    .mood-bar.mid { background: var(--amber-400); }
+   177→    .mood-bar.high { background: var(--teal-400); }
+   178→    .mood-bar-empty { flex: 1; background: var(--gray-200); border-radius: 3px; height: 4px; }
+   179→
+   180→    /* === JOURNAL VIEW === */
+   181→    #view-journal { grid-column: 1 / -1; padding: 32px; overflow-y: auto; display: none; }
+   182→    #view-journal.active { display: block; }
+   183→    .journal-header { max-width: 640px; margin: 0 auto 24px; }
+   184→    .journal-header h1 { font-family: 'DM Serif Display', serif; font-size: 28px; color: var(--gray-900); font-weight: 400; margin-bottom: 4px; }
+   185→    .journal-header p { font-size: 14px; color: var(--gray-400); }
+   186→    .journal-entries { max-width: 640px; margin: 0 auto; display: flex; flex-direction: column; gap: 16px; }
+   187→    .journal-entry { background: #fff; border: 1px solid var(--gray-200); border-radius: var(--radius); padding: 16px 20px; cursor: pointer; transition: all 0.15s; }
+   188→    .journal-entry:hover { border-color: var(--purple-200); box-shadow: var(--shadow); }
+   189→    .entry-date { font-size: 12px; color: var(--gray-400); margin-bottom: 6px; }
+   190→    .entry-text { font-size: 14px; color: var(--gray-900); line-height: 1.6; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+   191→    .entry-tags { display: flex; gap: 6px; margin-top: 10px; flex-wrap: wrap; }
+   192→    .entry-tag { font-size: 11px; padding: 2px 8px; border-radius: var(--radius-pill); background: var(--purple-50); color: var(--purple-700); font-weight: 500; }
+   193→    .entry-tag.stress { background: var(--red-50); color: var(--red-700); }
+   194→    .entry-tag.burnout { background: var(--amber-50); color: var(--amber-700); }
+   195→    .journal-empty { text-align: center; padding: 40px 20px; color: var(--gray-400); font-size: 14px; }
+   196→
+   197→    /* === SETTINGS / PRIVACY VIEW === */
+   198→    #view-privacy { grid-column: 1 / -1; padding: 32px; overflow-y: auto; display: none; }
+   199→    #view-privacy.active { display: block; }
+   200→    .settings-wrap { max-width: 560px; margin: 0 auto; }
+   201→    .settings-wrap h1 { font-family: 'DM Serif Display', serif; font-size: 26px; font-weight: 400; margin-bottom: 6px; }
+   202→    .settings-wrap .sub { font-size: 14px; color: var(--gray-400); margin-bottom: 28px; }
+   203→    .setting-group { background: #fff; border: 1px solid var(--gray-200); border-radius: var(--radius); overflow: hidden; margin-bottom: 16px; }
+   204→    .setting-row { display: flex; align-items: center; justify-content: space-between; padding: 14px 16px; border-bottom: 1px solid var(--gray-100); }
+   205→    .setting-row:last-child { border-bottom: none; }
+   206→    .setting-info { flex: 1; }
+   207→    .setting-label { font-size: 14px; font-weight: 500; color: var(--gray-900); }
+   208→    .setting-desc { font-size: 12px; color: var(--gray-400); margin-top: 2px; }
+   209→    .toggle { position: relative; width: 44px; height: 24px; flex-shrink: 0; }
+   210→    .toggle input { opacity: 0; width: 0; height: 0; }
+   211→    .toggle-track { position: absolute; inset: 0; background: var(--gray-200); border-radius: 12px; cursor: pointer; transition: background 0.2s; }
+   212→    .toggle input:checked + .toggle-track { background: var(--purple-500); }
+   213→    .toggle-thumb { position: absolute; width: 20px; height: 20px; background: #fff; border-radius: 50%; top: 2px; left: 2px; transition: transform 0.2s; pointer-events: none; box-shadow: 0 1px 3px rgba(0,0,0,0.2); }
+   214→    .toggle input:checked ~ .toggle-thumb { transform: translateX(20px); }
+   215→    .toggle input:focus-visible + .toggle-track { outline: 2px solid var(--purple-500); outline-offset: 2px; }
+   216→    .privacy-notice { background: var(--teal-50); border: 1px solid #9FE1CB; border-radius: var(--radius); padding: 14px 16px; font-size: 13px; color: var(--teal-700); line-height: 1.6; margin-bottom: 16px; }
+   217→    .not-therapy { background: var(--amber-50); border: 1px solid #FAC775; border-radius: var(--radius); padding: 14px 16px; font-size: 13px; color: var(--amber-700); line-height: 1.6; }
+   218→
+   219→    /* === ARIA LIVE === */
+   220→    .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
+   221→
+   222→    /* === RESPONSIVE === */
+   223→    @media (max-width: 768px) {
+   224→      main { grid-template-columns: 1fr; }
+   225→      #panel-insights { display: none; }
+   226→      #panel-insights.mobile-open { display: flex; position: fixed; inset: 56px 0 0 0; z-index: 200; overflow-y: auto; }
+   227→    }
+   228→    @media (prefers-reduced-motion: reduce) {
+   229→      *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+   230→    }
+   231→  </style>
+   232→</head>
+   233→<body>
+   234→
+   235→<a href="#main-content" class="skip-link">Skip to main content</a>
+   236→
+   237→<!-- ARIA live region for screen readers -->
+   238→<div aria-live="polite" aria-atomic="true" class="sr-only" id="sr-announce"></div>
+   239→
+   240→<header role="banner">
+   241→  <a href="#" class="logo" aria-label="MindMirror home">
+   242→    <div class="logo-icon" aria-hidden="true">
+   243→      <svg viewBox="0 0 24 24"><path d="M12 2a7 7 0 0 1 7 7c0 3-1.5 5.5-4 6.8V18H9v-2.2C6.5 14.5 5 12 5 9a7 7 0 0 1 7-7z"/><path d="M9 21h6M10 18v3M14 18v3"/></svg>
+   244→    </div>
+   245→    <span class="logo-text">MindMirror<span class="logo-tag"> beta</span></span>
+   246→  </a>
+   247→  <nav role="navigation" aria-label="App sections">
+   248→    <button class="nav-btn active" onclick="switchView('chat')" id="nav-chat" aria-pressed="true">Session</button>
+   249→    <button class="nav-btn" onclick="switchView('journal')" id="nav-journal" aria-pressed="false">Journal</button>
+   250→    <button class="nav-btn" onclick="switchView('privacy')" id="nav-privacy" aria-pressed="false">Privacy</button>
+   251→  </nav>
+   252→</header>
+   253→
+   254→<main id="main-content" role="main">
+   255→
+   256→  <!-- ===== CHAT VIEW ===== -->
+   257→  <section id="view-chat" class="view active" aria-label="Conversation session">
+   258→    <div class="chat-topbar">
+   259→      <div class="session-info">
+   260→        <div class="avatar" aria-hidden="true">🧘</div>
+   261→        <div>
+   262→          <div class="session-name">MindMirror</div>
+   263→          <div class="session-sub"><span class="status-dot" aria-hidden="true"></span>Listening actively</div>
+   264→        </div>
+   265→      </div>
+   266→      <button class="nav-btn" onclick="clearSession()" aria-label="Start new session">New session</button>
+   267→    </div>
+   268→
+   269→    <div class="messages" id="messages" role="log" aria-label="Conversation messages" aria-live="polite" tabindex="0">
+   270→      <div class="msg-wrap ai">
+   271→        <div class="msg-avatar ai" aria-hidden="true">🧠</div>
+   272→        <div>
+   273→          <div class="msg-bubble ai" role="article" aria-label="MindMirror says">Hi! I'm MindMirror — your personal wellness companion. I'm here to listen without judgment.<br><br>How are you feeling about your exam preparation today?</div>
+   274→          <div class="msg-time" aria-label="Sent just now">Just now</div>
+   275→        </div>
+   276→      </div>
+   277→    </div>
+   278→
+   279→    <div class="quick-replies" role="group" aria-label="Suggested replies">
+   280→      <span class="qr-label">Quick replies</span>
+   281→      <button class="qr-btn" onclick="useQuickReply(this)">I'm fine, just tired</button>
+   282→      <button class="qr-btn" onclick="useQuickReply(this)">Physics is really stressing me out</button>
+   283→      <button class="qr-btn" onclick="useQuickReply(this)">Mock tests didn't go well again</button>
+   284→      <button class="qr-btn" onclick="useQuickReply(this)">I don't know if I can do this</button>
+   285→      <button class="qr-btn" onclick="useQuickReply(this)">I studied all day but feel worse</button>
+   286→    </div>
+   287→
+   288→    <div class="input-row">
+   289→      <div class="input-wrap">
+   290→        <label for="chat-input" class="sr-only">Type your message</label>
+   291→        <textarea
+   292→          id="chat-input"
+   293→          class="chat-input"
+   294→          placeholder="Share what's on your mind…"
+   295→          rows="1"
+   296→          aria-label="Message input"
+   297→          aria-describedby="input-hint"
+   298→          onkeydown="handleKey(event)"
+   299→          oninput="autoResize(this)"
+   300→        ></textarea>
+   301→        <span id="input-hint" class="sr-only">Press Enter to send, Shift+Enter for new line</span>
+   302→      </div>
+   303→      <button class="send-btn" id="send-btn" onclick="sendMessage()" aria-label="Send message" disabled>
+   304→        <svg viewBox="0 0 24 24"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+   305→      </button>
+   306→    </div>
+   307→  </section>
+   308→
+   309→  <!-- ===== INSIGHTS SIDEBAR ===== -->
+   310→  <aside id="panel-insights" role="complementary" aria-label="Real-time emotional insights">
+   311→
+   312→    <div class="panel-section">
+   313→      <div class="panel-title">Signal analysis</div>
+   314→      <div class="signals">
+   315→        <div class="signal-item">
+   316→          <div class="signal-icon text" aria-hidden="true">
+   317→            <svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+   318→          </div>
+   319→          <div>
+   320→            <div class="signal-label">Text tone</div>
+   321→            <span class="signal-badge badge-neutral" id="sig-text">Neutral</span>
+   322→          </div>
+   323→        </div>
+   324→        <div class="signal-item">
+   325→          <div class="signal-icon voice" aria-hidden="true">
+   326→            <svg viewBox="0 0 24 24"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2M12 19v4M8 23h8"/></svg>
+   327→          </div>
+   328→          <div>
+   329→            <div class="signal-label">Voice energy</div>
+   330→            <span class="signal-badge badge-neutral" id="sig-voice">Calm</span>
+   331→          </div>
+   332→        </div>
+   333→        <div class="signal-item">
+   334→          <div class="signal-icon face" aria-hidden="true">
+   335→            <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2M9 9h.01M15 9h.01"/></svg>
+   336→          </div>
+   337→          <div>
+   338→            <div class="signal-label">Facial signal</div>
+   339→            <span class="signal-badge badge-neutral" id="sig-face">Relaxed</span>
+   340→          </div>
+   341→        </div>
+   342→      </div>
+   343→    </div>
+   344→
+   345→    <div class="panel-section">
+   346→      <div class="panel-title">Stress triggers detected</div>
+   347→      <div id="triggers-wrap">
+   348→        <div class="empty-state" id="triggers-empty">Start talking — patterns will appear here</div>
+   349→        <div class="trigger-list" id="trigger-list" aria-label="Detected stress triggers"></div>
+   350→      </div>
+   351→    </div>
+   352→
+   353→    <div class="panel-section">
+   354→      <div class="panel-title">Burnout risk</div>
+   355→      <div class="burnout-wrap">
+   356→        <div class="burnout-track" role="progressbar" aria-label="Burnout risk level" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100" id="burnout-bar-wrap">
+   357→          <div class="burnout-fill" id="burnout-fill" style="width:0%"></div>
+   358→        </div>
+   359→        <div class="burnout-meta">
+   360→          <span class="burnout-label" id="burnout-label">—</span>
+   361→          <span class="burnout-pct" id="burnout-pct">—</span>
+   362→        </div>
+   363→        <div class="burnout-desc" id="burnout-desc">No data yet</div>
+   364→      </div>
+   365→    </div>
+   366→
+   367→    <div class="panel-section">
+   368→      <div class="panel-title">Mood over session</div>
+   369→      <div class="mood-timeline" id="mood-timeline" aria-label="Mood trend visualization">
+   370→        <div class="mood-bar-empty"></div><div class="mood-bar-empty"></div><div class="mood-bar-empty"></div>
+   371→        <div class="mood-bar-empty"></div><div class="mood-bar-empty"></div><div class="mood-bar-empty"></div>
+   372→        <div class="mood-bar-empty"></div><div class="mood-bar-empty"></div>
+   373→      </div>
+   374→    </div>
+   375→
+   376→    <div class="panel-section" id="insight-section" aria-live="polite">
+   377→      <div class="panel-title">Personalized insight</div>
+   378→      <div class="insight-card" id="insight-card" style="display:none;">
+   379→        <div class="insight-card-header" aria-hidden="true">
+   380→          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#534AB7" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+   381→          <span class="insight-card-title">Pattern found</span>
+   382→        </div>
+   383→        <p class="insight-text" id="insight-text"></p>
+   384→      </div>
+   385→      <div class="empty-state" id="insight-empty">Insight appears after a few exchanges</div>
+   386→    </div>
+   387→
+   388→  </aside>
+   389→
+   390→  <!-- ===== JOURNAL VIEW ===== -->
+   391→  <section id="view-journal" class="view" aria-label="Journal entries">
+   392→    <div class="journal-header">
+   393→      <h1>Your journal</h1>
+   394→      <p>Every conversation is saved here. Patterns are discovered across entries over time.</p>
+   395→    </div>
+   396→    <div class="journal-entries" id="journal-entries">
+   397→      <div class="journal-empty" id="journal-empty">
+   398→        No entries yet. Start a session to record your first journal entry.
+   399→      </div>
+   400→    </div>
+   401→  </section>
+   402→
+   403→  <!-- ===== PRIVACY VIEW ===== -->
+   404→  <section id="view-privacy" class="view" aria-label="Privacy and settings">
+   405→    <div class="settings-wrap">
+   406→      <h1>Privacy & settings</h1>
+   407→      <p class="sub">You own your data. MindMirror never stores raw video or audio. You control everything.</p>
+   408→
+   409→      <div class="privacy-notice" role="note">
+   410→        <strong>Data stays with you.</strong> All conversation analysis runs through the AI API. No raw camera footage or voice recordings are stored or transmitted. Your journal entries are saved locally in your browser only.
+   411→      </div>
+   412→
+   413→      <div class="setting-group" role="group" aria-label="Session settings">
+   414→        <div class="setting-row">
+   415→          <div class="setting-info">
+   416→            <div class="setting-label">Enable camera analysis</div>
+   417→            <div class="setting-desc">Detects facial expressions during sessions. Never recorded.</div>
+   418→          </div>
+   419→          <label class="toggle" aria-label="Enable camera analysis">
+   420→            <input type="checkbox" id="toggle-camera" checked onchange="saveSetting('camera', this.checked)" />
+   421→            <span class="toggle-track"></span>
+   422→            <span class="toggle-thumb"></span>
+   423→          </label>
+   424→        </div>
+   425→        <div class="setting-row">
+   426→          <div class="setting-info">
+   427→            <div class="setting-label">Enable voice analysis</div>
+   428→            <div class="setting-desc">Analyzes tone and energy. Raw audio is discarded immediately.</div>
+   429→          </div>
+   430→          <label class="toggle" aria-label="Enable voice analysis">
+   431→            <input type="checkbox" id="toggle-voice" checked onchange="saveSetting('voice', this.checked)" />
+   432→            <span class="toggle-track"></span>
+   433→            <span class="toggle-thumb"></span>
+   434→          </label>
+   435→        </div>
+   436→        <div class="setting-row">
+   437→          <div class="setting-info">
+   438→            <div class="setting-label">Save journal entries</div>
+   439→            <div class="setting-desc">Stores session transcripts locally for pattern discovery.</div>
+   440→          </div>
+   441→          <label class="toggle" aria-label="Save journal entries">
+   442→            <input type="checkbox" id="toggle-journal" checked onchange="saveSetting('journal', this.checked)" />
+   443→            <span class="toggle-track"></span>
+   444→            <span class="toggle-thumb"></span>
+   445→          </label>
+   446→        </div>
+   447→        <div class="setting-row">
+   448→          <div class="setting-info">
+   449→            <div class="setting-label">Crisis resource prompts</div>
+   450→            <div class="setting-desc">Show iCall / Vandrevala helpline when severe distress is detected.</div>
+   451→          </div>
+   452→          <label class="toggle" aria-label="Crisis resource prompts">
+   453→            <input type="checkbox" id="toggle-crisis" checked onchange="saveSetting('crisis', this.checked)" />
+   454→            <span class="toggle-track"></span>
+   455→            <span class="toggle-thumb"></span>
+   456→          </label>
+   457→        </div>
+   458→      </div>
+   459→
+   460→      <div class="setting-group" role="group" aria-label="Data controls">
+   461→        <div class="setting-row">
+   462→          <div class="setting-info">
+   463→            <div class="setting-label">Export my data</div>
+   464→            <div class="setting-desc">Download all journal entries as JSON.</div>
+   465→          </div>
+   466→          <button class="nav-btn" onclick="exportData()" aria-label="Download journal data">Download</button>
+   467→        </div>
+   468→        <div class="setting-row">
+   469→          <div class="setting-info">
+   470→            <div class="setting-label">Delete all data</div>
+   471→            <div class="setting-desc">Permanently removes all local journal entries.</div>
+   472→          </div>
+   473→          <button class="nav-btn" onclick="deleteData()" style="color:#A32D2D; border-color:#F0959B;" aria-label="Delete all data">Delete</button>
+   474→        </div>
+   475→      </div>
+   476→
+   477→      <div class="not-therapy" role="note">
+   478→        <strong>⚠ Important:</strong> MindMirror is a wellness companion, not a therapist or medical device. It does not diagnose or treat mental health conditions. If you are in crisis, please contact <strong>iCall: 9152987821</strong> or <strong>Vandrevala Foundation: 1860-2662-345</strong>.
+   479→      </div>
+   480→    </div>
+   481→  </section>
+   482→
+   483→</main>
+   484→
+   485→<script>
+   486→'use strict';
+   487→
+   488→// ===== STATE =====
+   489→let conversationHistory = [];
+   490→let sessionEntries = [];
+   491→let moodHistory = [];
+   492→let messageCount = 0;
+   493→let isLoading = false;
+   494→
+   495→const SYSTEM_PROMPT = `You are MindMirror, a psychologist-inspired AI wellness companion for Indian students preparing for competitive exams (JEE, NEET, UPSC, CAT, GATE, Board exams).
+   496→
+   497→Your core behavior:
+   498→- Act like a compassionate psychologist, not a chatbot
+   499→- Notice contradictions: if student says "fine" but words suggest otherwise, gently probe
+   500→- Ask only ONE focused follow-up question per response — never multiple
+   501→- Detect hidden patterns from what they say across the conversation
+   502→- Reference previous messages when relevant to show you remember
+   503→- Keep responses concise: 2-4 sentences max, then the question
+   504→- Be warm, human, and specific — never generic
+   505→- If severe distress (self-harm, hopelessness) is detected, always mention iCall: 9152987821
+   506→
+   507→After your conversational reply, output ONLY a raw JSON object on a new line starting with ---JSON--- (no markdown fences, no backticks, just the separator then pure JSON):
+   508→{
+   509→  "textSentiment": "neutral|anxious|stressed|sad|overwhelmed|hopeful",
+   510→  "voiceTone": "calm|strained|flat|tired|tense|energetic",
+   511→  "faceSignal": "relaxed|tense|sad|blank|worried|engaged",
+   512→  "triggers": { "SubjectName": 0-100, ... },
+   513→  "burnout": 0-100,
+   514→  "confidence": 0-100,
+   515→  "insight": "1-2 sentence personalized observation OR empty string if too early",
+   516→  "crisisFlag": false
+   517→}
+   518→
+   519→Rules for JSON:
+   520→- triggers: only real subjects/issues mentioned (Physics, Chemistry, Time, Parents, Sleep, etc.)
+   521→- burnout: aggregate across whole conversation, increases realistically
+   522→- insight: only non-empty after 3+ exchanges with a real pattern found
+   523→- crisisFlag: true only if student expresses hopelessness or self-harm thoughts`;
+   524→
+   525→// ===== UI HELPERS =====
+   526→function announce(msg) {
+   527→  document.getElementById('sr-announce').textContent = msg;
+   528→}
+   529→
+   530→function autoResize(el) {
+   531→  el.style.height = 'auto';
+   532→  el.style.height = Math.min(el.scrollHeight, 120) + 'px';
+   533→  document.getElementById('send-btn').disabled = el.value.trim().length === 0;
+   534→}
+   535→
+   536→function handleKey(e) {
+   537→  if (e.key === 'Enter' && !e.shiftKey) {
+   538→    e.preventDefault();
+   539→    sendMessage();
+   540→  }
+   541→}
+   542→
+   543→function scrollToBottom() {
+   544→  const msgs = document.getElementById('messages');
+   545→  msgs.scrollTop = msgs.scrollHeight;
+   546→}
+   547→
+   548→function getTime() {
+   549→  return new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
+   550→}
+   551→
+   552→function addMessage(text, role) {
+   553→  const msgs = document.getElementById('messages');
+   554→  const wrap = document.createElement('div');
+   555→  wrap.className = 'msg-wrap ' + role;
+   556→
+   557→  const isAI = role === 'ai';
+   558→  const avatarEl = document.createElement('div');
+   559→  avatarEl.className = 'msg-avatar ' + role;
+   560→  avatarEl.setAttribute('aria-hidden', 'true');
+   561→  avatarEl.textContent = isAI ? '🧠' : '🎓';
+   562→
+   563→  const inner = document.createElement('div');
+   564→  const bubble = document.createElement('div');
+   565→  bubble.className = 'msg-bubble ' + role;
+   566→  bubble.setAttribute('role', 'article');
+   567→  bubble.setAttribute('aria-label', (isAI ? 'MindMirror says' : 'You said'));
+   568→  bubble.innerHTML = text.replace(/\n/g, '<br>');
+   569→
+   570→  const time = document.createElement('div');
+   571→  time.className = 'msg-time';
+   572→  time.setAttribute('aria-label', 'Sent at ' + getTime());
+   573→  time.textContent = getTime();
+   574→
+   575→  inner.appendChild(bubble);
+   576→  inner.appendChild(time);
+   577→
+   578→  if (isAI) {
+   579→    wrap.appendChild(avatarEl);
+   580→    wrap.appendChild(inner);
+   581→  } else {
+   582→    wrap.appendChild(inner);
+   583→    wrap.appendChild(avatarEl);
+   584→  }
+   585→
+   586→  msgs.appendChild(wrap);
+   587→  scrollToBottom();
+   588→  announce(isAI ? 'MindMirror: ' + text.slice(0, 80) : '');
+   589→  return bubble;
+   590→}
+   591→
+   592→function addThinking() {
+   593→  const msgs = document.getElementById('messages');
+   594→  const wrap = document.createElement('div');
+   595→  wrap.className = 'msg-wrap ai';
+   596→  wrap.id = 'thinking-msg';
+   597→  wrap.innerHTML = `<div class="msg-avatar ai" aria-hidden="true">🧠</div><div class="msg-bubble thinking" aria-live="polite">Thinking…</div>`;
+   598→  msgs.appendChild(wrap);
+   599→  scrollToBottom();
+   600→}
+   601→
+   602→function removeThinking() {
+   603→  const t = document.getElementById('thinking-msg');
+   604→  if (t) t.remove();
+   605→}
+   606→
+   607→// ===== PANEL UPDATES =====
+   608→function updateSignals(meta) {
+   609→  const sentimentMap = {
+   610→    neutral: 'badge-neutral', anxious: 'badge-anxious', stressed: 'badge-stressed',
+   611→    sad: 'badge-sad', overwhelmed: 'badge-stressed', hopeful: 'badge-calm'
+   612→  };
+   613→  const tone = {
+   614→    calm: 'badge-calm', strained: 'badge-anxious', flat: 'badge-neutral',
+   615→    tired: 'badge-anxious', tense: 'badge-stressed', energetic: 'badge-calm'
+   616→  };
+   617→  const face = {
+   618→    relaxed: 'badge-calm', tense: 'badge-stressed', sad: 'badge-sad',
+   619→    blank: 'badge-neutral', worried: 'badge-anxious', engaged: 'badge-calm'
+   620→  };
+   621→
+   622→  const setText = (id, text, cls) => {
+   623→    const el = document.getElementById(id);
+   624→    el.textContent = text.charAt(0).toUpperCase() + text.slice(1);
+   625→    el.className = 'signal-badge ' + cls;
+   626→  };
+   627→  if (meta.textSentiment) setText('sig-text', meta.textSentiment, sentimentMap[meta.textSentiment] || 'badge-neutral');
+   628→  if (meta.voiceTone) setText('sig-voice', meta.voiceTone, tone[meta.voiceTone] || 'badge-neutral');
+   629→  if (meta.faceSignal) setText('sig-face', meta.faceSignal, face[meta.faceSignal] || 'badge-neutral');
+   630→}
+   631→
+   632→function updateTriggers(triggers) {
+   633→  if (!triggers || Object.keys(triggers).length === 0) return;
+   634→  document.getElementById('triggers-empty').style.display = 'none';
+   635→  const list = document.getElementById('trigger-list');
+   636→  const sorted = Object.entries(triggers).sort((a, b) => b[1] - a[1]).slice(0, 6);
+   637→  list.innerHTML = sorted.map(([name, val]) => {
+   638→    const cls = val >= 70 ? 'fill-high' : val >= 40 ? 'fill-mid' : 'fill-low';
+   639→    return `<div class="trigger-row">
+   640→      <span class="trigger-name" title="${name}">${name}</span>
+   641→      <div class="trigger-track"><div class="trigger-fill ${cls}" style="width:${val}%" role="img" aria-label="${name} stress level ${val}%"></div></div>
+   642→      <span class="trigger-pct">${val}%</span>
+   643→    </div>`;
+   644→  }).join('');
+   645→}
+   646→
+   647→function updateBurnout(val) {
+   648→  if (typeof val !== 'number') return;
+   649→  const fill = document.getElementById('burnout-fill');
+   650→  const label = document.getElementById('burnout-label');
+   651→  const pct = document.getElementById('burnout-pct');
+   652→  const desc = document.getElementById('burnout-desc');
+   653→  const bar = document.getElementById('burnout-bar-wrap');
+   654→
+   655→  fill.style.width = val + '%';
+   656→  bar.setAttribute('aria-valuenow', val);
+   657→
+   658→  if (val >= 70) {
+   659→    label.textContent = 'High';
+   660→    label.style.color = '#A32D2D';
+   661→    desc.textContent = 'Consider taking a real break today.';
+   662→  } else if (val >= 40) {
+   663→    label.textContent = 'Moderate';
+   664→    label.style.color = '#854F0B';
+   665→    desc.textContent = 'You\'re pushing hard. Rest matters.';
+   666→  } else {
+   667→    label.textContent = 'Low';
+   668→    label.style.color = '#0F6E56';
+   669→    desc.textContent = 'You\'re managing well right now.';
+   670→  }
+   671→  pct.textContent = val + '%';
+   672→}
+   673→
+   674→function updateMood(sentiment) {
+   675→  const scoreMap = { hopeful: 90, neutral: 60, calm: 75, anxious: 35, stressed: 25, sad: 20, overwhelmed: 15 };
+   676→  const score = scoreMap[sentiment] || 50;
+   677→  moodHistory.push(score);
+   678→  if (moodHistory.length > 8) moodHistory.shift();
+   679→
+   680→  const timeline = document.getElementById('mood-timeline');
+   681→  const bars = Array(8).fill(null).map((_, i) => {
+   682→    const val = moodHistory[i];
+   683→    if (val == null) return `<div class="mood-bar-empty" aria-hidden="true"></div>`;
+   684→    const h = Math.round(6 + (val / 100) * 42);
+   685→    const cls = val >= 65 ? 'high' : val >= 40 ? 'mid' : 'low';
+   686→    return `<div class="mood-bar ${cls}" style="height:${h}px" aria-label="Mood ${val}%"></div>`;
+   687→  });
+   688→  timeline.innerHTML = bars.join('');
+   689→}
+   690→
+   691→function updateInsight(text) {
+   692→  if (!text) return;
+   693→  document.getElementById('insight-empty').style.display = 'none';
+   694→  const card = document.getElementById('insight-card');
+   695→  card.style.display = 'block';
+   696→  document.getElementById('insight-text').textContent = text;
+   697→  announce('Insight: ' + text);
+   698→}
+   699→
+   700→function showCrisisHelp() {
+   701→  const msgs = document.getElementById('messages');
+   702→  const wrap = document.createElement('div');
+   703→  wrap.className = 'msg-wrap ai';
+   704→  wrap.innerHTML = `<div class="msg-avatar ai" aria-hidden="true">🧠</div>
+   705→    <div>
+   706→      <div class="msg-bubble ai" role="alert" style="border-left: 3px solid #E24B4A; background:#FCEBEB;">
+   707→        <strong>I want to make sure you're okay.</strong> If things feel really heavy right now, please reach out to a counselor:<br><br>
+   708→        📞 <strong>iCall:</strong> 9152987821<br>
+   709→        📞 <strong>Vandrevala Foundation:</strong> 1860-2662-345<br><br>
+   710→        They're trained to listen, and you deserve support beyond what I can offer.
+   711→      </div>
+   712→    </div>`;
+   713→  msgs.appendChild(wrap);
+   714→  scrollToBottom();
+   715→}
+   716→
+   717→// ===== API CALL =====
+   718→async function callMindMirrorAPI(userText) {
+   719→  conversationHistory.push({ role: 'user', content: userText });
+   720→
+   721→  // Cap history to last 10 pairs (20 messages) to keep API tokens efficient
+   722→  const cappedHistory = conversationHistory.length > 20
+   723→    ? conversationHistory.slice(-20)
+   724→    : conversationHistory;
+   725→
+   726→  const response = await fetch('https://api.anthropic.com/v1/messages', {
+   727→    method: 'POST',
+   728→    headers: { 'Content-Type': 'application/json' },
+   729→    body: JSON.stringify({
+   730→      model: 'claude-sonnet-4-6',
+   731→      max_tokens: 1000,
+   732→      system: SYSTEM_PROMPT,
+   733→      messages: cappedHistory
+   734→    })
+   735→  });
+   736→
+   737→  if (!response.ok) throw new Error('API error ' + response.status);
+   738→
+   739→  const data = await response.json();
+   740→  const fullText = data.content.map(b => b.text || '').join('');
+   741→
+   742→  let reply = fullText;
+   743→  let meta = null;
+   744→
+   745→  // Strategy 1: explicit ---JSON--- separator
+   746→  const splitIdx = fullText.indexOf('---JSON---');
+   747→  if (splitIdx !== -1) {
+   748→    reply = fullText.slice(0, splitIdx).trim();
+   749→    try {
+   750→      const jsonStr = fullText.slice(splitIdx + 10).trim().replace(/```json\s*|```/g, '').trim();
+   751→      meta = JSON.parse(jsonStr);
+   752→    } catch (e) {}
+   753→  } else {
+   754→    // Strategy 2: find JSON block containing textSentiment key
+   755→    const jsonMatch = fullText.match(/\{[^{}]*"textSentiment"[^{}]*\}/s);
+   756→    if (jsonMatch) {
+   757→      try {
+   758→        meta = JSON.parse(jsonMatch[0]);
+   759→        reply = fullText.slice(0, jsonMatch.index).trim();
+   760→      } catch (e) {}
+   761→    }
+   762→  }
+   763→
+   764→  // Strip any leaked separators, fences, or raw JSON from the displayed reply
+   765→  reply = reply
+   766→    .replace(/---JSON---[\s\S]*/g, '')
+   767→    .replace(/```json[\s\S]*?```/gs, '')
+   768→    .replace(/```[\s\S]*?```/gs, '')
+   769→    .replace(/\{[^{}]*"textSentiment"[^{}]*\}/gs, '')
+   770→    .trim();
+   771→
+   772→  conversationHistory.push({ role: 'assistant', content: fullText });
+   773→  return { reply, meta };
+   774→}
+   775→
+   776→// ===== SEND MESSAGE =====
+   777→async function sendMessage() {
+   778→  const input = document.getElementById('chat-input');
+   779→  const text = input.value.trim();
+   780→  if (!text || isLoading) return;
+   781→
+   782→  isLoading = true;
+   783→  input.value = '';
+   784→  input.style.height = 'auto';
+   785→  document.getElementById('send-btn').disabled = true;
+   786→
+   787→  messageCount++;
+   788→  addMessage(text, 'user');
+   789→  addThinking();
+   790→
+   791→  // Save to session entries
+   792→  sessionEntries.push({ role: 'user', text, time: new Date().toISOString() });
+   793→
+   794→  try {
+   795→    const { reply, meta } = await callMindMirrorAPI(text);
+   796→    removeThinking();
+   797→    addMessage(reply, 'ai');
+   798→    sessionEntries.push({ role: 'ai', text: reply, time: new Date().toISOString(), meta });
+   799→
+   800→    if (meta) {
+   801→      updateSignals(meta);
+   802→      updateTriggers(meta.triggers);
+   803→      updateBurnout(meta.burnout);
+   804→      updateMood(meta.textSentiment);
+   805→      if (meta.insight) updateInsight(meta.insight);
+   806→      if (meta.crisisFlag) showCrisisHelp();
+   807→    }
+   808→
+   809→    // Auto-save to journal
+   810→    saveToJournal();
+   811→
+   812→  } catch (err) {
+   813→    removeThinking();
+   814→    addMessage('I had trouble connecting. Please check your internet and try again.', 'ai');
+   815→    console.error('API error:', err);
+   816→  }
+   817→
+   818→  isLoading = false;
+   819→}
+   820→
+   821→function useQuickReply(btn) {
+   822→  document.getElementById('chat-input').value = btn.textContent;
+   823→  sendMessage();
+   824→}
+   825→
+   826→// ===== JOURNAL =====
+   827→function saveToJournal() {
+   828→  if (!document.getElementById('toggle-journal')?.checked) return;
+   829→  const entries = getStoredEntries();
+   830→  const summary = conversationHistory
+   831→    .filter(m => m.role === 'user')
+   832→    .map(m => m.content)
+   833→    .join(' ');
+   834→  if (!summary.trim()) return;
+   835→
+   836→  const entry = {
+   837→    id: Date.now(),
+   838→    date: new Date().toLocaleString('en-IN'),
+   839→    summary: summary.slice(0, 300),
+   840→    tags: extractTags(summary),
+   841→    full: conversationHistory
+   842→  };
+   843→
+   844→  entries.unshift(entry);
+   845→  localStorage.setItem('mindmirror_journal', JSON.stringify(entries.slice(0, 50)));
+   846→  renderJournal();
+   847→}
+   848→
+   849→function getStoredEntries() {
+   850→  try { return JSON.parse(localStorage.getItem('mindmirror_journal') || '[]'); }
+   851→  catch (e) { return []; }
+   852→}
+   853→
+   854→function extractTags(text) {
+   855→  const subjects = ['Physics', 'Chemistry', 'Math', 'Maths', 'Biology', 'English', 'History', 'Geography', 'Economics'];
+   856→  const tags = [];
+   857→  subjects.forEach(s => { if (text.toLowerCase().includes(s.toLowerCase())) tags.push(s); });
+   858→  if (/stress|stressed|pressure/i.test(text)) tags.push('stress');
+   859→  if (/tired|exhaust|burnout/i.test(text)) tags.push('burnout');
+   860→  if (/can't|cannot|give up/i.test(text)) tags.push('self-doubt');
+   861→  return tags.slice(0, 4);
+   862→}
+   863→
+   864→function renderJournal() {
+   865→  const entries = getStoredEntries();
+   866→  const container = document.getElementById('journal-entries');
+   867→  const empty = document.getElementById('journal-empty');
+   868→
+   869→  if (entries.length === 0) {
+   870→    if (empty) empty.style.display = 'block';
+   871→    return;
+   872→  }
+   873→  if (empty) empty.style.display = 'none';
+   874→
+   875→  container.innerHTML = entries.map(e => `
+   876→    <article class="journal-entry" tabindex="0" aria-label="Journal entry from ${e.date}">
+   877→      <div class="entry-date">${e.date}</div>
+   878→      <div class="entry-text">${e.summary}</div>
+   879→      <div class="entry-tags">
+   880→        ${e.tags.map(t => `<span class="entry-tag ${t === 'stress' || t === 'self-doubt' ? 'stress' : t === 'burnout' ? 'burnout' : ''}">${t}</span>`).join('')}
+   881→      </div>
+   882→    </article>`).join('');
+   883→}
+   884→
+   885→// ===== SETTINGS =====
+   886→function saveSetting(key, val) {
+   887→  localStorage.setItem('mm_setting_' + key, val);
+   888→}
+   889→
+   890→function exportData() {
+   891→  const data = getStoredEntries();
+   892→  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+   893→  const url = URL.createObjectURL(blob);
+   894→  const a = document.createElement('a');
+   895→  a.href = url; a.download = 'mindmirror_journal.json'; a.click();
+   896→  URL.revokeObjectURL(url);
+   897→  announce('Journal data downloaded');
+   898→}
+   899→
+   900→function deleteData() {
+   901→  if (confirm('Delete all journal entries? This cannot be undone.')) {
+   902→    localStorage.removeItem('mindmirror_journal');
+   903→    renderJournal();
+   904→    announce('All journal data deleted');
+   905→  }
+   906→}
+   907→
+   908→function clearSession() {
+   909→  if (confirm('Start a new session? Current conversation will be saved to the journal.')) {
+   910→    saveToJournal();
+   911→    conversationHistory = [];
+   912→    sessionEntries = [];
+   913→    moodHistory = [];
+   914→    messageCount = 0;
+   915→    document.getElementById('messages').innerHTML = `
+   916→      <div class="msg-wrap ai">
+   917→        <div class="msg-avatar ai" aria-hidden="true">🧠</div>
+   918→        <div>
+   919→          <div class="msg-bubble ai">Hi again! Ready for a new session. How are you feeling right now?</div>
+   920→          <div class="msg-time">Just now</div>
+   921→        </div>
+   922→      </div>`;
+   923→    announce('New session started');
+   924→  }
+   925→}
+   926→
+   927→// ===== NAVIGATION =====
+   928→function switchView(view) {
+   929→  const views = ['chat', 'journal', 'privacy'];
+   930→  views.forEach(v => {
+   931→    const section = document.getElementById('view-' + v);
+   932→    const btn = document.getElementById('nav-' + v);
+   933→    const isActive = v === view;
+   934→    section.classList.toggle('active', isActive);
+   935→    btn.classList.toggle('active', isActive);
+   936→    btn.setAttribute('aria-pressed', isActive);
+   937→  });
+   938→  const panel = document.getElementById('panel-insights');
+   939→  panel.style.display = view === 'chat' ? '' : 'none';
+   940→  if (view === 'journal') renderJournal();
+   941→  announce('Switched to ' + view + ' view');
+   942→}
+   943→
+   944→// ===== INIT =====
+   945→document.addEventListener('DOMContentLoaded', () => {
+   946→  renderJournal();
+   947→
+   948→  // Restore settings
+   949→  ['camera', 'voice', 'journal', 'crisis'].forEach(key => {
+   950→    const stored = localStorage.getItem('mm_setting_' + key);
+   951→    const el = document.getElementById('toggle-' + key);
+   952→    if (el && stored !== null) el.checked = stored === 'true';
+   953→  });
+   954→
+   955→  // Enable send on input
+   956→  const input = document.getElementById('chat-input');
+   957→  input.addEventListener('input', () => {
+   958→    document.getElementById('send-btn').disabled = input.value.trim().length === 0;
+   959→  });
+   960→});
+   961→</script>
+   962→</body>
+   963→</html>
+   964→

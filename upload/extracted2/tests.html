@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>MindMirror — Test Suite</title>
+  <style>
+    body { font-family: monospace; padding: 24px; background: #0f0f0f; color: #e0e0e0; }
+    h1 { color: #AFA9EC; margin-bottom: 4px; font-size: 18px; }
+    .sub { color: #666; font-size: 13px; margin-bottom: 24px; }
+    .suite { margin-bottom: 20px; }
+    .suite-name { color: #888; font-size: 12px; text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 8px; }
+    .test { display: flex; align-items: flex-start; gap: 10px; padding: 6px 0; border-bottom: 1px solid #1e1e1e; font-size: 13px; }
+    .pass { color: #1D9E75; }
+    .fail { color: #E24B4A; }
+    .icon { flex-shrink: 0; width: 16px; }
+    .desc { flex: 1; color: #ccc; }
+    .detail { font-size: 11px; color: #666; margin-top: 2px; }
+    .summary { margin-top: 24px; padding: 14px 16px; border-radius: 8px; font-size: 14px; font-weight: bold; }
+    .summary.all-pass { background: #0a2018; color: #1D9E75; border: 1px solid #0F6E56; }
+    .summary.has-fail { background: #200a0a; color: #E24B4A; border: 1px solid #A32D2D; }
+    .progress { height: 4px; background: #1e1e1e; border-radius: 2px; margin-bottom: 24px; overflow: hidden; }
+    .progress-fill { height: 100%; background: #534AB7; border-radius: 2px; transition: width 0.3s; }
+  </style>
+</head>
+<body>
+  <h1>🧠 MindMirror — Test Suite</h1>
+  <div class="sub">Unit tests for core logic functions</div>
+  <div class="progress"><div class="progress-fill" id="progress" style="width:0%"></div></div>
+  <div id="output"></div>
+  <div id="summary"></div>
+
+<script>
+'use strict';
+
+// ===== TEST FRAMEWORK =====
+const results = [];
+
+function expect(description, fn) {
+  try {
+    const result = fn();
+    if (result === true || result === undefined) {
+      results.push({ pass: true, description });
+    } else {
+      results.push({ pass: false, description, detail: 'Returned: ' + JSON.stringify(result) });
+    }
+  } catch (e) {
+    results.push({ pass: false, description, detail: e.message });
+  }
+}
+
+function assertEqual(a, b) {
+  if (JSON.stringify(a) !== JSON.stringify(b)) {
+    throw new Error(`Expected ${JSON.stringify(b)}, got ${JSON.stringify(a)}`);
+  }
+  return true;
+}
+
+function assertContains(arr, item) {
+  if (!arr.includes(item)) throw new Error(`Expected array to contain "${item}"`);
+  return true;
+}
+
+function assertRange(val, min, max) {
+  if (val < min || val > max) throw new Error(`${val} not in range [${min}, ${max}]`);
+  return true;
+}
+
+function assertTruthy(val) {
+  if (!val) throw new Error(`Expected truthy, got ${val}`);
+  return true;
+}
+
+function assertFalsy(val) {
+  if (val) throw new Error(`Expected falsy, got ${val}`);
+  return true;
+}
+
+// ===== FUNCTIONS UNDER TEST (inlined from index.html) =====
+
+function extractTags(text) {
+  const subjects = ['Physics', 'Chemistry', 'Math', 'Maths', 'Biology', 'English', 'History', 'Geography', 'Economics'];
+  const tags = [];
+  subjects.forEach(s => { if (text.toLowerCase().includes(s.toLowerCase())) tags.push(s); });
+  if (/stress|stressed|pressure/i.test(text)) tags.push('stress');
+  if (/tired|exhaust|burnout/i.test(text)) tags.push('burnout');
+  if (/can't|cannot|give up/i.test(text)) tags.push('self-doubt');
+  return tags.slice(0, 4);
+}
+
+function getTime() {
+  return new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
+}
+
+function getStoredEntries(mockStorage) {
+  try { return JSON.parse(mockStorage || '[]'); }
+  catch (e) { return []; }
+}
+
+function sanitizeInput(text) {
+  const div = document.createElement('div');
+  div.textContent = text;
+  return div.innerHTML;
+}
+
+function buildTriggerRows(triggers) {
+  if (!triggers || Object.keys(triggers).length === 0) return [];
+  return Object.entries(triggers)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 6);
+}
+
+function getBurnoutLabel(val) {
+  if (val >= 70) return 'High';
+  if (val >= 40) return 'Moderate';
+  return 'Low';
+}
+
+function getMoodClass(score) {
+  if (score >= 65) return 'high';
+  if (score >= 40) return 'mid';
+  return 'low';
+}
+
+function sentimentToScore(sentiment) {
+  const scoreMap = { hopeful: 90, neutral: 60, calm: 75, anxious: 35, stressed: 25, sad: 20, overwhelmed: 15 };
+  return scoreMap[sentiment] || 50;
+}
+
+function parseAPIResponse(fullText) {
+  const splitIdx = fullText.indexOf('---JSON---');
+  if (splitIdx !== -1) {
+    const reply = fullText.slice(0, splitIdx).trim();
+    try {
+      const jsonStr = fullText.slice(splitIdx + 10).trim();
+      const meta = JSON.parse(jsonStr);
+      return { reply, meta };
+    } catch (e) {
+      return { reply, meta: null };
+    }
+  }
+  const jsonMatch = fullText.match(/\{[\s\S]*\}/);
+  if (jsonMatch) {
+    try {
+      const meta = JSON.parse(jsonMatch[0]);
+      const reply = fullText.slice(0, jsonMatch.index).trim();
+      return { reply, meta };
+    } catch (e) {}
+  }
+  return { reply: fullText, meta: null };
+}
+
+function isValidMeta(meta) {
+  if (!meta || typeof meta !== 'object') return false;
+  const required = ['textSentiment', 'voiceTone', 'faceSignal', 'burnout'];
+  return required.every(k => k in meta);
+}
+
+function capConversationHistory(history, maxPairs = 10) {
+  if (history.length <= maxPairs * 2) return history;
+  return history.slice(-(maxPairs * 2));
+}
+
+// ===== TEST SUITES =====
+const suites = [
+
+  {
+    name: '1. Tag extraction',
+    tests: [
+      () => expect('detects Physics from text', () => assertContains(extractTags('I hate Physics so much'), 'Physics')),
+      () => expect('detects Chemistry', () => assertContains(extractTags('Chemistry paper was hard'), 'Chemistry')),
+      () => expect('detects stress keyword', () => assertContains(extractTags('I feel so stressed'), 'stress')),
+      () => expect('detects burnout keyword', () => assertContains(extractTags('I am exhausted and burnt out'), 'burnout')),
+      () => expect('detects self-doubt', () => assertContains(extractTags("I cannot do this anymore"), 'self-doubt')),
+      () => expect('returns max 4 tags', () => assertEqual(extractTags('Physics Chemistry Biology Math stress burnout').length <= 4, true)),
+      () => expect('returns empty for neutral text', () => assertEqual(extractTags('Today was okay').length, 0)),
+      () => expect('case insensitive matching', () => assertContains(extractTags('physics is hard'), 'Physics')),
+    ]
+  },
+
+  {
+    name: '2. Burnout classification',
+    tests: [
+      () => expect('0 → Low', () => assertEqual(getBurnoutLabel(0), 'Low')),
+      () => expect('39 → Low', () => assertEqual(getBurnoutLabel(39), 'Low')),
+      () => expect('40 → Moderate', () => assertEqual(getBurnoutLabel(40), 'Moderate')),
+      () => expect('69 → Moderate', () => assertEqual(getBurnoutLabel(69), 'Moderate')),
+      () => expect('70 → High', () => assertEqual(getBurnoutLabel(70), 'High')),
+      () => expect('100 → High', () => assertEqual(getBurnoutLabel(100), 'High')),
+    ]
+  },
+
+  {
+    name: '3. Mood score mapping',
+    tests: [
+      () => expect('hopeful → 90', () => assertEqual(sentimentToScore('hopeful'), 90)),
+      () => expect('overwhelmed → 15 (lowest)', () => assertEqual(sentimentToScore('overwhelmed'), 15)),
+      () => expect('neutral → 60', () => assertEqual(sentimentToScore('neutral'), 60)),
+      () => expect('unknown → 50 default', () => assertEqual(sentimentToScore('alien_sentiment'), 50)),
+      () => expect('stressed → 25', () => assertEqual(sentimentToScore('stressed'), 25)),
+      () => expect('high score → high class', () => assertEqual(getMoodClass(70), 'high')),
+      () => expect('mid score → mid class', () => assertEqual(getMoodClass(50), 'mid')),
+      () => expect('low score → low class', () => assertEqual(getMoodClass(10), 'low')),
+    ]
+  },
+
+  {
+    name: '4. API response parsing',
+    tests: [
+      () => expect('parses ---JSON--- separator', () => {
+        const r = parseAPIResponse('Hello there.\n---JSON---\n{"textSentiment":"neutral","burnout":30}');
+        return assertEqual(r.reply, 'Hello there.') && assertEqual(r.meta.burnout, 30);
+      }),
+      () => expect('falls back to inline JSON', () => {
+        const r = parseAPIResponse('You seem stressed. {"textSentiment":"stressed","burnout":60,"voiceTone":"tense","faceSignal":"worried"}');
+        return assertTruthy(r.meta && r.meta.burnout === 60);
+      }),
+      () => expect('returns raw text if no JSON', () => {
+        const r = parseAPIResponse('Just a plain reply.');
+        return assertEqual(r.reply, 'Just a plain reply.') && assertEqual(r.meta, null);
+      }),
+      () => expect('handles malformed JSON gracefully', () => {
+        const r = parseAPIResponse('Reply.\n---JSON---\n{invalid json{{');
+        return assertEqual(r.meta, null);
+      }),
+    ]
+  },
+
+  {
+    name: '5. Meta validation',
+    tests: [
+      () => expect('valid meta passes', () => assertTruthy(isValidMeta({
+        textSentiment: 'neutral', voiceTone: 'calm', faceSignal: 'relaxed', burnout: 20
+      }))),
+      () => expect('null fails', () => assertFalsy(isValidMeta(null))),
+      () => expect('missing burnout fails', () => assertFalsy(isValidMeta({
+        textSentiment: 'neutral', voiceTone: 'calm', faceSignal: 'relaxed'
+      }))),
+      () => expect('empty object fails', () => assertFalsy(isValidMeta({}))),
+    ]
+  },
+
+  {
+    name: '6. Trigger sorting',
+    tests: [
+      () => expect('sorts by value descending', () => {
+        const rows = buildTriggerRows({ Physics: 80, Time: 40, Chemistry: 60 });
+        return assertEqual(rows[0][0], 'Physics');
+      }),
+      () => expect('caps at 6 triggers', () => {
+        const many = { A:90,B:80,C:70,D:60,E:50,F:40,G:30 };
+        return assertEqual(buildTriggerRows(many).length, 6);
+      }),
+      () => expect('returns empty for null triggers', () => assertEqual(buildTriggerRows(null).length, 0)),
+      () => expect('returns empty for empty object', () => assertEqual(buildTriggerRows({}).length, 0)),
+    ]
+  },
+
+  {
+    name: '7. Conversation history cap',
+    tests: [
+      () => expect('short history unchanged', () => {
+        const h = [{role:'user',content:'hi'},{role:'assistant',content:'hello'}];
+        return assertEqual(capConversationHistory(h, 10).length, 2);
+      }),
+      () => expect('caps long history to 20 messages (10 pairs)', () => {
+        const h = Array(30).fill(null).map((_,i) => ({role: i%2===0?'user':'assistant', content:'msg'+i}));
+        return assertEqual(capConversationHistory(h, 10).length, 20);
+      }),
+      () => expect('keeps most recent messages', () => {
+        const h = Array(30).fill(null).map((_,i) => ({role:'user', content:'msg'+i}));
+        const capped = capConversationHistory(h, 5);
+        return assertEqual(capped[capped.length-1].content, 'msg29');
+      }),
+    ]
+  },
+
+  {
+    name: '8. Security — input sanitization',
+    tests: [
+      () => expect('sanitizes XSS script tag', () => {
+        const clean = sanitizeInput('<script>alert("xss")</script>');
+        return assertFalsy(clean.includes('<script>'));
+      }),
+      () => expect('sanitizes img onerror', () => {
+        const clean = sanitizeInput('<img onerror="alert(1)" src=x>');
+        return assertFalsy(clean.includes('onerror'));
+      }),
+      () => expect('preserves normal text', () => {
+        const clean = sanitizeInput('I am stressed about Physics');
+        return assertTruthy(clean.includes('Physics'));
+      }),
+      () => expect('handles empty string', () => assertEqual(sanitizeInput(''), '')),
+    ]
+  },
+
+  {
+    name: '9. Storage — journal entries',
+    tests: [
+      () => expect('parses valid JSON array', () => assertEqual(getStoredEntries('[{"id":1}]').length, 1)),
+      () => expect('returns empty array for null', () => assertEqual(getStoredEntries(null).length, 0)),
+      () => expect('returns empty array for invalid JSON', () => assertEqual(getStoredEntries('{bad').length, 0)),
+      () => expect('returns empty array for empty string', () => assertEqual(getStoredEntries('').length, 0)),
+    ]
+  },
+
+  {
+    name: '10. Time formatting',
+    tests: [
+      () => expect('getTime returns non-empty string', () => assertTruthy(getTime().length > 0)),
+      () => expect('getTime contains colon separator', () => assertTruthy(getTime().includes(':'))),
+      () => expect('getTime is reasonably short (≤8 chars)', () => assertTruthy(getTime().length <= 8)),
+    ]
+  },
+
+];
+
+// ===== RENDER =====
+function renderResults() {
+  const output = document.getElementById('output');
+  const summaryEl = document.getElementById('summary');
+  let totalPass = 0, totalFail = 0;
+
+  output.innerHTML = suites.map(suite => {
+    suite.tests.forEach(t => t());
+    const suiteResults = results.splice(0, suite.tests.length);
+    const pass = suiteResults.filter(r => r.pass).length;
+    const fail = suiteResults.filter(r => !r.pass).length;
+    totalPass += pass; totalFail += fail;
+
+    return `<div class="suite">
+      <div class="suite-name">${suite.name} — ${pass}/${suite.tests.length} passed</div>
+      ${suiteResults.map(r => `
+        <div class="test">
+          <span class="icon ${r.pass ? 'pass' : 'fail'}">${r.pass ? '✓' : '✗'}</span>
+          <div>
+            <div class="desc">${r.description}</div>
+            ${r.detail ? `<div class="detail">${r.detail}</div>` : ''}
+          </div>
+        </div>`).join('')}
+    </div>`;
+  }).join('');
+
+  const total = totalPass + totalFail;
+  const pct = Math.round((totalPass / total) * 100);
+  document.getElementById('progress').style.width = pct + '%';
+
+  summaryEl.innerHTML = `<div class="summary ${totalFail === 0 ? 'all-pass' : 'has-fail'}">
+    ${totalFail === 0 ? '✓ All tests passed' : `✗ ${totalFail} test(s) failed`} — ${totalPass}/${total} (${pct}%)
+  </div>`;
+}
+
+renderResults();
+</script>
+</body>
+</html>
